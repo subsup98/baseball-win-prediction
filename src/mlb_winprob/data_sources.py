@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -19,17 +20,18 @@ OPEN_METEO_ARCHIVE_BASE_URL = "https://archive-api.open-meteo.com/v1"
 RETROSHEET_BASE_URL = "https://www.retrosheet.org/downloads"
 BASEBALL_DATABANK_BASE_URL = "https://raw.githubusercontent.com/chadwickbureau/baseballdatabank/master/core"
 CHADWICK_REGISTER_BASE_URL = "https://raw.githubusercontent.com/chadwickbureau/register/master/data"
+CHADWICK_PEOPLE_SHARDS = tuple("0123456789abcdef")
 
 RETROSHEET_DOWNLOADS = {
     "main_csv": f"{RETROSHEET_BASE_URL}/csvdownloads.zip",
     "basic_csvs": f"{RETROSHEET_BASE_URL}/basiccsvs.zip",
     "biodata": f"{RETROSHEET_BASE_URL}/biodata.zip",
     "allplayers": f"{RETROSHEET_BASE_URL}/allplayers.csv",
-    "gameinfo": f"{RETROSHEET_BASE_URL}/gameinfo.csv",
-    "teamstats": f"{RETROSHEET_BASE_URL}/teamstats.csv",
-    "batting": f"{RETROSHEET_BASE_URL}/batting.csv",
-    "pitching": f"{RETROSHEET_BASE_URL}/pitching.csv",
-    "fielding": f"{RETROSHEET_BASE_URL}/fielding.csv",
+    "gameinfo": f"{RETROSHEET_BASE_URL}/gameinfo.zip",
+    "teamstats": f"{RETROSHEET_BASE_URL}/teamstats.zip",
+    "batting": f"{RETROSHEET_BASE_URL}/batting.zip",
+    "pitching": f"{RETROSHEET_BASE_URL}/pitching.zip",
+    "fielding": f"{RETROSHEET_BASE_URL}/fielding.zip",
 }
 
 LAHMAN_CORE_TABLES = {
@@ -50,7 +52,7 @@ VENUE_COORDINATE_FALLBACKS = {
 
 
 def read_csv_table(path: str | Path) -> pd.DataFrame:
-    frame = pd.read_csv(path)
+    frame = pd.read_csv(path, low_memory=False)
     if "game_date" in frame.columns:
         frame["game_date"] = pd.to_datetime(frame["game_date"])
     return frame
@@ -334,7 +336,22 @@ class RetrosheetCollector:
         if dataset not in self.downloads:
             valid = ", ".join(sorted(self.downloads))
             raise ValueError(f"Unknown Retrosheet dataset '{dataset}'. Valid values: {valid}")
-        return download_url(self.downloads[dataset], output)
+        url = self.downloads[dataset]
+        output_path = Path(output)
+        if url.endswith(".zip") and output_path.suffix.lower() == ".csv":
+            zip_path = output_path.with_suffix(".zip")
+            download_url(url, zip_path)
+            with zipfile.ZipFile(zip_path) as archive:
+                csv_members = [name for name in archive.namelist() if name.lower().endswith(".csv")]
+                if not csv_members:
+                    raise ValueError(f"No CSV files found in {zip_path}")
+                preferred = f"{dataset}.csv"
+                member = preferred if preferred in csv_members else csv_members[0]
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, output_path.open("wb") as target:
+                    target.write(source.read())
+            return output_path
+        return download_url(url, output_path)
 
 
 class LahmanCollector:
@@ -355,7 +372,15 @@ class ChadwickRegisterCollector:
     """Download Chadwick Bureau player ID register tables."""
 
     def download_people(self, output: str | Path) -> Path:
-        return download_url(f"{CHADWICK_REGISTER_BASE_URL}/people.csv", output)
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        frames = []
+        for shard in CHADWICK_PEOPLE_SHARDS:
+            shard_path = output_path.with_name(f"people-{shard}.csv")
+            download_url(f"{CHADWICK_REGISTER_BASE_URL}/people-{shard}.csv", shard_path)
+            frames.append(pd.read_csv(shard_path, low_memory=False))
+        pd.concat(frames, ignore_index=True).to_csv(output_path, index=False)
+        return output_path
 
 
 class OpenMeteoArchiveCollector:

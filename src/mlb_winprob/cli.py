@@ -22,11 +22,14 @@ from mlb_winprob.data_sources import (
     read_csv_table,
     write_csv_table,
 )
+from mlb_winprob.config import config_digest, load_season_holdout_config, versioned_output_dir, write_run_metadata
 from mlb_winprob.experiments import run_model_experiments, select_feature_columns
 from mlb_winprob.features import FeatureBuilder
+from mlb_winprob.id_map import write_id_map
 from mlb_winprob.park_factors import build_empirical_park_factors
 from mlb_winprob.prediction import build_prediction_result, simple_key_reasons
 from mlb_winprob.reporting import read_feature_tables, write_feature_quality_report, write_season_holdout_report
+from mlb_winprob.retrosheet import standardize_retrosheet_tables
 from mlb_winprob.schemas import FeatureBuildConfig
 from mlb_winprob.standardize import standardize_mlb_stats_api_boxscores
 from mlb_winprob.statcast import aggregate_statcast_batting, aggregate_statcast_pitching, merge_statcast_quality
@@ -70,15 +73,36 @@ def feature_quality_report_command(args: argparse.Namespace) -> None:
 
 
 def season_holdout_report_command(args: argparse.Namespace) -> None:
-    features = read_feature_tables(args.features)
-    model_names = [value.strip() for value in args.models.split(",") if value.strip()]
-    holdout_seasons = [int(value.strip()) for value in args.holdout_seasons.split(",") if value.strip()]
+    config = load_season_holdout_config(args.config) if args.config else None
+    feature_paths = config.features if config else args.features
+    if not feature_paths:
+        raise ValueError("--features is required when --config is not provided.")
+    output_dir = args.output_dir or (config.output_dir if config else None)
+    if output_dir is None:
+        raise ValueError("--output-dir is required when --config is not provided.")
+    model_values = config.models if config else [value.strip() for value in args.models.split(",") if value.strip()]
+    holdout_values = config.holdout_seasons if config else [int(value.strip()) for value in args.holdout_seasons.split(",") if value.strip()]
+    prediction_mode = args.prediction_mode or (config.prediction_mode if config else "confirmed_lineup")
+    if config and config.versioned_output:
+        output_dir = versioned_output_dir(output_dir, run_name=config.name, digest=config_digest(config))
+
+    features = read_feature_tables(feature_paths)
     paths = write_season_holdout_report(
         features,
-        args.output_dir,
-        holdout_seasons=holdout_seasons,
-        model_names=model_names,
-        prediction_mode=args.prediction_mode,
+        output_dir,
+        holdout_seasons=holdout_values,
+        model_names=model_values,
+        prediction_mode=prediction_mode,
+    )
+    paths.update(
+        write_run_metadata(
+            output_dir,
+            config=config,
+            config_path=args.config,
+            feature_paths=feature_paths,
+            row_count=len(features),
+            column_count=features.shape[1],
+        )
     )
     for name, path in paths.items():
         print(f"Wrote {name}: {path}")
@@ -301,6 +325,16 @@ def collect_chadwick_people_command(args: argparse.Namespace) -> None:
     print(f"Wrote Chadwick register people.csv to {path}")
 
 
+def build_id_map_command(args: argparse.Namespace) -> None:
+    path = write_id_map(
+        chadwick_people_csv=args.chadwick_people,
+        mlb_people_csvs=args.mlb_people or [],
+        output=args.output,
+    )
+    id_map = read_csv_table(path)
+    print(f"Wrote {len(id_map)} ID map rows to {path}")
+
+
 def download_url_command(args: argparse.Namespace) -> None:
     path = download_url(args.url, args.output)
     print(f"Wrote {args.url} to {path}")
@@ -313,6 +347,20 @@ def standardize_mlb_boxscores_command(args: argparse.Namespace) -> None:
         output_dir=args.output_dir,
         prediction_mode=args.prediction_mode,
         people_csv=args.people,
+    )
+    for name, path in outputs.items():
+        print(f"Wrote {name}: {path}")
+
+
+def standardize_retrosheet_command(args: argparse.Namespace) -> None:
+    seasons = [int(value.strip()) for value in args.seasons.split(",") if value.strip()] if args.seasons else None
+    outputs = standardize_retrosheet_tables(
+        gameinfo_csv=args.gameinfo,
+        teamstats_csv=args.teamstats,
+        batting_csv=args.batting,
+        pitching_csv=args.pitching,
+        output_dir=args.output_dir,
+        seasons=seasons,
     )
     for name, path in outputs.items():
         print(f"Wrote {name}: {path}")
@@ -442,11 +490,12 @@ def main() -> None:
     quality_parser.set_defaults(func=feature_quality_report_command)
 
     holdout_parser = subparsers.add_parser("season-holdout-report")
-    holdout_parser.add_argument("--features", nargs="+", required=True)
-    holdout_parser.add_argument("--output-dir", required=True)
+    holdout_parser.add_argument("--config", help="TOML config file for a reproducible holdout experiment.")
+    holdout_parser.add_argument("--features", nargs="+")
+    holdout_parser.add_argument("--output-dir")
     holdout_parser.add_argument("--holdout-seasons", default="2022,2023,2024,2025")
     holdout_parser.add_argument("--models", default="elo,logistic,random_forest")
-    holdout_parser.add_argument("--prediction-mode", choices=["pre_lineup", "confirmed_lineup"], default="confirmed_lineup")
+    holdout_parser.add_argument("--prediction-mode", choices=["pre_lineup", "confirmed_lineup"])
     holdout_parser.set_defaults(func=season_holdout_report_command)
 
     park_parser = subparsers.add_parser("build-empirical-park-factors")
@@ -563,6 +612,12 @@ def main() -> None:
     chadwick_parser.add_argument("--output", required=True)
     chadwick_parser.set_defaults(func=collect_chadwick_people_command)
 
+    id_map_parser = subparsers.add_parser("build-id-map")
+    id_map_parser.add_argument("--chadwick-people", required=True)
+    id_map_parser.add_argument("--mlb-people", nargs="*", help="Optional MLB Stats API people metadata CSV files")
+    id_map_parser.add_argument("--output", required=True)
+    id_map_parser.set_defaults(func=build_id_map_command)
+
     url_parser = subparsers.add_parser("download-url")
     url_parser.add_argument("--url", required=True)
     url_parser.add_argument("--output", required=True)
@@ -575,6 +630,15 @@ def main() -> None:
     standardize_parser.add_argument("--prediction-mode", choices=["pre_lineup", "confirmed_lineup"], default="confirmed_lineup")
     standardize_parser.add_argument("--people", help="Optional MLB Stats API people metadata CSV")
     standardize_parser.set_defaults(func=standardize_mlb_boxscores_command)
+
+    retrosheet_standardize_parser = subparsers.add_parser("standardize-retrosheet")
+    retrosheet_standardize_parser.add_argument("--gameinfo", required=True)
+    retrosheet_standardize_parser.add_argument("--teamstats", required=True)
+    retrosheet_standardize_parser.add_argument("--batting", required=True)
+    retrosheet_standardize_parser.add_argument("--pitching", required=True)
+    retrosheet_standardize_parser.add_argument("--output-dir", required=True)
+    retrosheet_standardize_parser.add_argument("--seasons", help="Comma-separated seasons to include, e.g. 2021,2022")
+    retrosheet_standardize_parser.set_defaults(func=standardize_retrosheet_command)
 
     season_dataset_parser = subparsers.add_parser("collect-mlb-season-dataset")
     season_dataset_parser.add_argument("--start-season", type=int, required=True)

@@ -1,0 +1,10 @@
+{
+  "column_count": 113,
+  "config_digest": "ef38dbac9b6d",
+  "config_path": "configs\\season_holdout_statcast.toml",
+  "feature_paths": [
+    "data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv"
+  ],
+  "generated_at": "2026-05-20T08:27:22.986227+00:00",
+  "row_count": 12148
+}

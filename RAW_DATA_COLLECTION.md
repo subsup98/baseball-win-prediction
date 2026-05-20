@@ -181,6 +181,18 @@ Retrosheet master CSV 또는 archive를 저장한다.
   --output data/raw/retrosheet/gameinfo.csv
 ```
 
+표준 백업 source 변환:
+
+```powershell
+.\.venv\Scripts\python.exe -m mlb_winprob.cli standardize-retrosheet `
+  --gameinfo data/raw/retrosheet/gameinfo.csv `
+  --teamstats data/raw/retrosheet/teamstats.csv `
+  --batting data/raw/retrosheet/batting.csv `
+  --pitching data/raw/retrosheet/pitching.csv `
+  --output-dir data/standardized/retrosheet_2021_2025 `
+  --seasons 2021,2022,2023,2024,2025
+```
+
 사용 가능한 dataset:
 
 ```text
@@ -205,7 +217,11 @@ biodata
 
 ## FanGraphs
 
-`pybaseball`을 통해 batting/pitching leaderboard를 저장한다.
+FanGraphs는 현재 모델 입력의 primary source가 아니라 보조/검산 source로 고정한다. 시즌 최종 leaderboard 값은 과거 경기 전 시점에는 알 수 없으므로 feature table에 직접 넣지 않는다. 사용 목적은 다음 세 가지다.
+
+- Retrosheet/MLB Stats API/Statcast 기반 rolling wOBA, FIP, K-BB% 계산값 검산
+- empirical park factor와 외부 park factor의 방향성 비교
+- 향후 season-to-date FanGraphs split을 안정적으로 재구성할 수 있을 때만 경기 전 feature 후보로 승격
 
 ```powershell
 .\.venv\Scripts\python.exe -m mlb_winprob.cli collect-fangraphs `
@@ -221,7 +237,25 @@ biodata
   --output data/raw/fangraphs/pitching_2024.csv
 ```
 
-주의: FanGraphs 시즌 최종값은 과거 경기 Feature에 직접 넣으면 데이터 누수다. 우선 보조/검산용으로 저장한다.
+저장 위치:
+
+```text
+data/raw/fangraphs/batting_YYYY.csv
+data/raw/fangraphs/pitching_YYYY.csv
+```
+
+주의: FanGraphs 시즌 최종값은 과거 경기 Feature에 직접 넣으면 데이터 누수다. 현재 운영 기준에서는 raw 보존과 검산만 수행한다.
+
+## 라인업 source 운영 기준
+
+`confirmed_lineup`은 MLB Stats API boxscore의 실제 출전/타순 정보를 primary source로 사용한다. historical fallback은 Retrosheet `teamstats.csv`의 `start_l1`~`start_l9`를 사용한다.
+
+`pre_lineup`은 MLB Stats API schedule의 `probablePitcher`까지는 primary source로 사용하되, 예상 타순은 아직 신뢰 가능한 원천을 고정하지 않는다. 운영 기준은 다음과 같다.
+
+- 확정 라인업 실험과 예상 라인업 실험은 반드시 `prediction_mode`로 분리한다.
+- 예상 라인업 raw source를 추가할 때는 `lineups.csv`에 `prediction_mode=pre_lineup`, `lineup_source`, `lineup_confidence`를 기록한다.
+- source 후보는 MLB Stats API preview/live feed lineup availability, 공식 club lineup 발표, 신뢰 가능한 lineup feed 순서로 검토한다.
+- source 확정 전에는 `confirmed_lineup` 결과를 실제 성능 기준선으로 보고, `pre_lineup`은 별도 연구 확장으로 둔다.
 
 ## Lahman / Baseball Databank
 
@@ -261,6 +295,15 @@ HomeGames
 ```powershell
 .\.venv\Scripts\python.exe -m mlb_winprob.cli collect-chadwick-people `
   --output data/raw/chadwick/people.csv
+```
+
+ID crosswalk 생성:
+
+```powershell
+.\.venv\Scripts\python.exe -m mlb_winprob.cli build-id-map `
+  --chadwick-people data/raw/chadwick/people.csv `
+  --mlb-people data/raw/mlb_stats_api/people_2021.csv data/raw/mlb_stats_api/people_2022.csv data/raw/mlb_stats_api/people_2023.csv data/raw/mlb_stats_api/people_2024.csv data/raw/mlb_stats_api/people_2025.csv `
+  --output data/processed/id_map.csv
 ```
 
 ## Generic Download
@@ -328,6 +371,6 @@ feature columns: 90
 
 ## 다음 단계
 
-- 2021-2025 시즌 단위 원천 데이터와 feature CSV를 구축한다.
-- Statcast event row를 handedness split과 xwOBA 집계로 변환한다.
-- Retrosheet CSV를 historical fallback table로 변환한다.
+- FanGraphs raw leaderboard를 시즌별로 보존하고 검산 리포트를 추가한다.
+- 예상 라인업 source가 확정되면 `lineup_source`와 `lineup_confidence` 컬럼을 표준 schema에 추가한다.
+- SHAP 리포트 산출물이 필요한 환경에는 `.[explain]` extra를 설치한다.

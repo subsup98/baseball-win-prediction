@@ -503,3 +503,363 @@ away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
 
 - 첫 경기/시즌 초반은 누수 방지상 prior Statcast 이력이 없어 결측이 남는 것이 정상입니다.
 - `.venv` 기준 테스트를 재실행했고 `24 passed`를 확인했습니다.
+
+### 0.1.13 2021-2025 Statcast 전체 수집 및 feature 반영
+
+- 12개 worker 병렬 수집 스크립트를 추가했습니다.
+  - `scripts/collect_statcast_parallel.py`
+  - 시즌별 `games.csv`의 최소/최대 경기일을 기준으로 7일 chunk를 만들고 `pybaseball.statcast()`로 수집합니다.
+  - chunk 산출물은 `data/raw/statcast/chunks/`에 저장하고, 성공 후 시즌별 CSV로 합칩니다.
+- 2021-2025 전체 Statcast event CSV를 수집했습니다.
+
+```text
+data/raw/statcast/statcast_2021.csv  712320 rows
+data/raw/statcast/statcast_2022.csv  710210 rows
+data/raw/statcast/statcast_2023.csv  720684 rows
+data/raw/statcast/statcast_2024.csv  732481 rows
+data/raw/statcast/statcast_2025.csv  742080 rows
+```
+
+- 시즌별 Statcast event를 타자/투수 품질 집계로 변환했습니다.
+
+```text
+2021 batting quality 51490 rows, pitching quality 21540 rows
+2022 batting quality 48329 rows, pitching quality 20878 rows
+2023 batting quality 48767 rows, pitching quality 20629 rows
+2024 batting quality 51565 rows, pitching quality 21659 rows
+2025 batting quality 52011 rows, pitching quality 21948 rows
+```
+
+- 2021-2025 표준 로그에 Statcast 품질 컬럼을 병합했습니다.
+  - `data/standardized/mlb_stats_api_*/batting_logs_statcast.csv`
+  - `data/standardized/mlb_stats_api_*/pitcher_logs_statcast.csv`
+- Statcast + weather + park factor 포함 feature CSV를 생성했습니다.
+
+```text
+data/processed/features_confirmed_2021_with_park_factors_statcast.csv  2429 rows
+data/processed/features_confirmed_2022_with_park_factors_statcast.csv  2430 rows
+data/processed/features_confirmed_2023_with_park_factors_statcast.csv  2430 rows
+data/processed/features_confirmed_2024_with_park_factors_statcast.csv  2429 rows
+data/processed/features_confirmed_2025_with_park_factors_statcast.csv  2430 rows
+data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv  12148 rows
+```
+
+- Statcast 포함 품질 리포트와 holdout 리포트를 생성했습니다.
+  - `outputs/quality/features_confirmed_2021_2025_with_park_factors_statcast/`
+  - `outputs/experiments/season_holdout_confirmed_2021_2025_with_park_factors_statcast/`
+- 주요 Statcast feature null-rate를 확인했습니다.
+
+```text
+home_lineup_statcast_xwoba null_rate 0.0281
+away_lineup_statcast_xwoba null_rate 0.0284
+lineup_statcast_xwoba_diff null_rate 0.0505
+home_sp_statcast_xwoba_allowed_to_date null_rate 0.1025
+away_sp_statcast_xwoba_allowed_to_date null_rate 0.1019
+sp_statcast_xwoba_allowed_diff null_rate 0.1691
+```
+
+- park factor 포함 + Statcast holdout 기준 best model은 모든 holdout season에서 `random_forest`였습니다.
+
+```text
+2022 random_forest log_loss 0.6781 accuracy 0.5827
+2023 random_forest log_loss 0.6834 accuracy 0.5572
+2024 random_forest log_loss 0.6792 accuracy 0.5751
+2025 random_forest log_loss 0.6806 accuracy 0.5556
+```
+
+- `.venv` 기준 테스트를 재실행했고 `24 passed`를 확인했습니다.
+
+### 0.1.14 Calibration plot 이미지 저장
+
+- 시즌별 holdout 리포트 생성 시 calibration CSV와 함께 PNG 이미지를 저장하도록 추가했습니다.
+  - 구현: `src/mlb_winprob/reporting.py`
+  - 함수: `write_calibration_plot`
+  - 저장 위치: `outputs/experiments/*/calibration/`
+- matplotlib은 optional plotting dependency처럼 다루어, import가 불가능하면 CSV 리포트는 계속 생성되도록 했습니다.
+- Statcast 포함 holdout 리포트를 재생성해 calibration plot 12개를 확인했습니다.
+
+```text
+outputs/experiments/season_holdout_confirmed_2021_2025_with_park_factors_statcast/calibration/
+
+calibration_2022_elo.png
+calibration_2022_logistic.png
+calibration_2022_random_forest.png
+calibration_2023_elo.png
+calibration_2023_logistic.png
+calibration_2023_random_forest.png
+calibration_2024_elo.png
+calibration_2024_logistic.png
+calibration_2024_random_forest.png
+calibration_2025_elo.png
+calibration_2025_logistic.png
+calibration_2025_random_forest.png
+```
+
+- reporting 단위 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `25 passed`
+
+### 0.1.15 Feature importance 리포트
+
+- 시즌별 holdout 리포트 생성 시 `feature_importances_`를 제공하는 모델의 feature importance를 CSV와 Markdown summary로 저장하도록 추가했습니다.
+  - 구현: `src/mlb_winprob/reporting.py`
+  - 함수: `feature_importance_table`, `write_feature_importance_summary`
+  - 저장 위치: `outputs/experiments/*/feature_importance/`
+- 현재 기본 holdout 실행 모델 중에서는 `random_forest`가 importance를 제공합니다.
+- Statcast 포함 holdout 리포트를 재생성해 feature importance 파일 4개와 summary를 확인했습니다.
+
+```text
+outputs/experiments/season_holdout_confirmed_2021_2025_with_park_factors_statcast/feature_importance/
+
+feature_importance_2022_random_forest.csv
+feature_importance_2023_random_forest.csv
+feature_importance_2024_random_forest.csv
+feature_importance_2025_random_forest.csv
+summary.md
+```
+
+- 2025 holdout 기준 상위 feature 일부를 확인했습니다.
+
+```text
+away_team_runs_allowed_per_game_to_date  0.0172
+team_woba_diff                           0.0171
+home_team_runs_allowed_per_game_to_date  0.0168
+away_bullpen_whip_season_to_date         0.0155
+away_bullpen_fip_season_to_date          0.0140
+```
+
+- 2025 holdout 기준 Statcast feature도 중상위권에 포함되는 것을 확인했습니다.
+
+```text
+away_lineup_statcast_xwoba              0.0118
+sp_statcast_xwoba_allowed_diff          0.0115
+lineup_statcast_xwoba_diff              0.0115
+home_lineup_statcast_xwoba              0.0112
+home_sp_statcast_xwoba_allowed_to_date  0.0109
+```
+
+- reporting 단위 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `26 passed`
+
+### 0.1.16 Statcast feature pipeline 운영 명령 표준화
+
+- Statcast 포함 feature/report 전체 재생성 스크립트를 추가했습니다.
+  - `scripts/build_statcast_feature_pipeline.py`
+- 기본 실행은 기존 시즌별 Statcast 원천 CSV를 재사용합니다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_statcast_feature_pipeline.py
+```
+
+- 원천 Statcast CSV까지 다시 수집하려면 `--collect`를 사용합니다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_statcast_feature_pipeline.py `
+  --collect `
+  --workers 12
+```
+
+- 스크립트가 표준화한 단계:
+  - 시즌별 Statcast event 집계
+  - 표준 타자/투수 로그에 Statcast 품질 컬럼 병합
+  - 시즌별 Statcast + weather + park factor 포함 feature 생성
+  - 2021-2025 통합 feature 생성
+  - feature quality report 생성
+  - season holdout report 생성
+  - calibration PNG 생성
+  - random forest feature importance report 생성
+
+- `--collect` 없이 기존 원천 CSV를 재사용해 전체 파이프라인 재생성을 검증했습니다.
+
+```text
+2021 feature rows 2429 columns 112
+2022 feature rows 2430 columns 112
+2023 feature rows 2430 columns 112
+2024 feature rows 2429 columns 112
+2025 feature rows 2430 columns 112
+combined feature rows 12148
+```
+
+- 사용법을 문서화했습니다.
+  - `README.md`
+  - `src/mlb_winprob/DATA_AND_CLI.md`
+
+### 0.1.17 Retrosheet 백업 source 변환
+
+- Retrosheet 다운로드 URL이 개별 CSV에서 ZIP 원천으로 바뀐 것을 반영했습니다.
+  - `gameinfo.zip`
+  - `teamstats.zip`
+  - `batting.zip`
+  - `pitching.zip`
+- `collect-retrosheet`가 ZIP 원천을 받아 `.csv` 출력으로 내부 CSV를 추출하도록 보강했습니다.
+- 2021-2025 Retrosheet 원천 4종을 수집했습니다.
+
+```text
+data/raw/retrosheet/gameinfo.csv
+data/raw/retrosheet/teamstats.csv
+data/raw/retrosheet/batting.csv
+data/raw/retrosheet/pitching.csv
+```
+
+- Retrosheet 표준 변환 모듈과 CLI를 추가했습니다.
+  - `src/mlb_winprob/retrosheet.py`
+  - `mlb-winprob standardize-retrosheet`
+- 2021-2025 Retrosheet 데이터를 프로젝트 표준 schema로 변환했습니다.
+
+```text
+data/standardized/retrosheet_2021_2025/games.csv          12148 rows
+data/standardized/retrosheet_2021_2025/weather.csv        12148 rows
+data/standardized/retrosheet_2021_2025/lineups.csv        218664 rows
+data/standardized/retrosheet_2021_2025/batting_logs.csv   356498 rows
+data/standardized/retrosheet_2021_2025/pitcher_logs.csv   104610 rows
+```
+
+- Retrosheet games는 2021-2025 MLB Stats API 표준 데이터와 같은 경기 수를 가집니다.
+
+```text
+2021 2429 games
+2022 2430 games
+2023 2430 games
+2024 2429 games
+2025 2430 games
+home_sp_id null_rate 0.0
+away_sp_id null_rate 0.0
+```
+
+- Retrosheet-only feature CSV와 품질 리포트를 생성해 feature builder 경로를 검증했습니다.
+
+```text
+data/processed/features_confirmed_2021_2025_retrosheet.csv  12148 rows
+outputs/quality/features_confirmed_2021_2025_retrosheet/
+```
+
+- Retrosheet 변환 단위 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `28 passed`
+
+### 0.1.18 Chadwick 기반 id_map 구축
+
+- Chadwick Register가 단일 `people.csv` 대신 `people-0.csv`~`people-f.csv` 분할 구조로 바뀐 것을 반영했습니다.
+- `collect-chadwick-people`가 16개 shard를 내려받아 `data/raw/chadwick/people.csv`로 합치도록 보강했습니다.
+- ID crosswalk 생성 모듈과 CLI를 추가했습니다.
+  - `src/mlb_winprob/id_map.py`
+  - `mlb-winprob build-id-map`
+- Chadwick Register와 MLB Stats API people metadata를 결합해 ID map을 생성했습니다.
+
+```text
+data/raw/chadwick/people.csv  516081 rows
+data/processed/id_map.csv     128742 rows
+```
+
+- 주요 ID 보유 row 수:
+
+```text
+mlbam_id       127526
+retrosheet_id   25620
+bbref_id        23861
+fangraphs_id    21201
+```
+
+- 2021-2025 표준 데이터의 선수 ID 커버리지를 확인했습니다.
+
+```text
+retro_batting   2692 / 2692 matched
+retro_pitching  1743 / 1743 matched
+mlbam_batting   2012 / 2012 matched
+mlbam_pitching  1743 / 1743 matched
+```
+
+- `read_csv_table`의 대용량 혼합 타입 CSV 경고를 줄이기 위해 `low_memory=False`를 적용했습니다.
+- id_map 단위 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `29 passed`
+
+### 0.1.19 작업 목록 정리 및 SHAP 설명 리포트
+
+- `PROJECT_CHECKLIST.md`의 오래된 미완료 항목을 최신 worklog 기준으로 정리했습니다.
+  - Retrosheet 백업 source 변환
+  - Chadwick 기반 `id_map.csv`
+  - weather source 자동화
+  - calibration plot
+  - feature importance
+  - Statcast 포함 운영 스크립트
+- FanGraphs 운영 기준을 확정했습니다.
+  - 현재는 모델 primary input이 아니라 raw 보존, 고급 지표 검산, park factor 비교용 보조 source로 사용합니다.
+  - 시즌 최종 leaderboard는 경기 전 feature에 직접 넣지 않습니다.
+- 라인업 source 운영 기준을 확정했습니다.
+  - `confirmed_lineup`: MLB Stats API boxscore primary, Retrosheet 선발 라인업 fallback
+  - `pre_lineup`: probable pitcher는 MLB Stats API schedule을 사용하되, 예상 타순 source는 별도 확정 전까지 연구 확장으로 둡니다.
+- optional SHAP 설명 리포트 경로를 추가했습니다.
+  - optional extra: `.[explain]`
+  - 구현: `src/mlb_winprob/reporting.py`
+  - 산출물: `outputs/experiments/*/shap_importance/`
+  - 계산 비용을 줄이기 위해 holdout 표본은 기본 250경기까지 샘플링합니다.
+- `.venv`에 `shap` extra를 설치하고 전체 테스트를 재실행했습니다.
+  - result: `30 passed`
+- Statcast + park factor 포함 holdout 리포트를 재생성해 SHAP 산출물을 확인했습니다.
+
+```text
+outputs/experiments/season_holdout_confirmed_2021_2025_with_park_factors_statcast/shap_importance/
+
+shap_importance_2022_random_forest.csv
+shap_importance_2023_random_forest.csv
+shap_importance_2024_random_forest.csv
+shap_importance_2025_random_forest.csv
+summary.md
+```
+
+### 0.1.20 실험 config 및 결과 버전 관리
+
+- 시즌 holdout 실험을 TOML config로 실행할 수 있는 경로를 추가했습니다.
+  - 구현: `src/mlb_winprob/config.py`
+  - CLI: `mlb-winprob season-holdout-report --config ...`
+  - 예시 config: `configs/season_holdout_statcast.toml`
+- 기존 CLI 인자 방식은 유지했습니다.
+  - `--config`가 없으면 기존처럼 `--features`, `--output-dir`, `--holdout-seasons`, `--models`를 사용합니다.
+- 결과 버전 관리 방식을 확정했습니다.
+  - config에서 `versioned_output = true`이면 `outputs/experiments/versioned/YYYYMMDD_HHMMSS_<name>_<config_hash>/` 형태로 저장합니다.
+  - 모든 holdout report는 `run_manifest.json`을 저장합니다.
+  - config 기반 실행은 `config_snapshot.json`도 함께 저장합니다.
+- Statcast + park factor 포함 holdout config를 실제 실행해 versioned output을 검증했습니다.
+
+```text
+outputs/experiments/versioned/20260520_172415_season_holdout_confirmed_2021_2025_with_park_factors_statcast_ef38dbac9b6d/
+
+metrics_by_holdout.csv
+best_by_holdout.csv
+calibration/
+feature_importance/
+shap_importance/
+run_manifest.json
+config_snapshot.json
+```
+
+- config 단위 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `33 passed`
+
+### 0.1.21 Handedness matchup feature 정교화
+
+- 라인업 좌우 매치업 feature를 당일 상대 선발투수 손 방향에 맞춰 계산하도록 보강했습니다.
+  - `lineup_platoon_woba`
+  - `lineup_platoon_advantage_ratio`
+  - `lineup_same_hand_ratio`
+  - `lineup_platoon_woba_diff`
+  - `lineup_platoon_advantage_diff`
+- `batting_logs.opposing_pitcher_hand`를 우선 사용하고, 표준 `games.csv`에 `home_sp_hand`, `away_sp_hand`가 있으면 fallback으로 사용합니다.
+- MLB Stats API 표준 변환 시 선발투수 손 방향을 `games.csv`에 기록하도록 보강했습니다.
+- Statcast + park factor 포함 feature/품질/holdout 리포트를 새 feature schema로 재생성했습니다.
+
+```text
+data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv
+rows: 12148
+columns: 121
+```
+
+- 새 holdout 결과도 재생성했습니다.
+
+```text
+2022 random_forest log_loss 0.6764 accuracy 0.5794
+2023 random_forest log_loss 0.6820 accuracy 0.5572
+2024 random_forest log_loss 0.6801 accuracy 0.5677
+2025 random_forest log_loss 0.6801 accuracy 0.5502
+```
+
+- feature 단위 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `34 passed`

@@ -314,3 +314,17 @@ def test_optional_statcast_quality_features_are_leakage_safe():
     assert g2["sp_statcast_xwoba_allowed_diff"] == (
         g2["away_sp_statcast_xwoba_allowed_to_date"] - g2["home_sp_statcast_xwoba_allowed_to_date"]
     )
+
+
+def test_lineup_platoon_features_use_opposing_starter_hand():
+    features = _build_features()
+    g2 = features.loc[features["game_id"] == "g2"].iloc[0]
+
+    assert g2["home_lineup_platoon_woba"] == g2["home_lineup_vs_rhp_woba"]
+    assert g2["away_lineup_platoon_woba"] == g2["away_lineup_vs_lhp_woba"]
+    assert g2["home_lineup_platoon_advantage_ratio"] == 1 / 3
+    assert g2["away_lineup_platoon_advantage_ratio"] == 1.0
+    assert g2["lineup_platoon_woba_diff"] == g2["home_lineup_platoon_woba"] - g2["away_lineup_platoon_woba"]
+    assert g2["lineup_platoon_advantage_diff"] == (
+        g2["home_lineup_platoon_advantage_ratio"] - g2["away_lineup_platoon_advantage_ratio"]
+    )

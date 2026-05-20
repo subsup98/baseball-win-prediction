@@ -111,6 +111,15 @@ mlb-winprob train `
   --output-dir outputs/confirmed
 ```
 
+Config 기반 시즌 holdout 리포트:
+
+```powershell
+mlb-winprob season-holdout-report `
+  --config configs/season_holdout_statcast.toml
+```
+
+`versioned_output = true`인 config는 `outputs/experiments/versioned/YYYYMMDD_HHMMSS_<name>_<config_hash>/` 아래에 결과를 저장하고, `run_manifest.json`과 `config_snapshot.json`을 함께 남깁니다.
+
 예측:
 
 ```powershell
@@ -128,6 +137,20 @@ mlb-winprob collect-statcast `
   --start-date 2024-04-01 `
   --end-date 2024-04-07 `
   --output data/raw/statcast_2024_04_01_07.csv
+```
+
+Statcast 포함 전체 feature/report 재생성:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_statcast_feature_pipeline.py
+```
+
+원천 Statcast CSV까지 다시 수집하려면:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_statcast_feature_pipeline.py `
+  --collect `
+  --workers 12
 ```
 
 MLB Stats API schedule 수집:

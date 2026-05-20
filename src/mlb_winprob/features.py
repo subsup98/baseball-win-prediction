@@ -234,7 +234,8 @@ class FeatureBuilder:
         )
 
         batter_profiles = self._compute_batter_pre_game_stats(batting_logs)
-        lineup_features = self._compute_lineup_features(games, lineups, batter_profiles)
+        matchup_context = self._lineup_matchup_context(games, batting_logs)
+        lineup_features = self._compute_lineup_features(games, lineups, batter_profiles, matchup_context)
         features = self._merge_home_away_team_features(features, lineup_features, feature_prefix="lineup_")
 
         team_features = self._compute_team_features(games, batting_logs)
@@ -341,6 +342,7 @@ class FeatureBuilder:
         games: pd.DataFrame,
         lineups: pd.DataFrame,
         batter_profiles: pd.DataFrame,
+        matchup_context: pd.DataFrame,
     ) -> pd.DataFrame:
         _require_columns(lineups, ["game_id", "team", "player_id", "batting_order"], "lineups")
         out = lineups.copy()
@@ -361,6 +363,7 @@ class FeatureBuilder:
         if "bats" not in out.columns:
             out["bats"] = np.nan
         out["bats"] = out["bats"].astype(str).str.upper().str[0]
+        out = out.merge(matchup_context, on=["game_id", "team"], how="left")
 
         profile_columns = [
             "batter_ops_season_to_date",
@@ -387,6 +390,19 @@ class FeatureBuilder:
             valid = group["batter_woba_season_to_date"].notna() & weights.notna()
             if valid.any() and float(weights.loc[valid].sum()) > 0:
                 weighted_woba = float(np.average(group.loc[valid, "batter_woba_season_to_date"], weights=weights.loc[valid]))
+            opposing_hand = group["opposing_sp_hand"].dropna().iloc[0] if group["opposing_sp_hand"].notna().any() else np.nan
+            if opposing_hand == "R":
+                platoon_woba = group["batter_woba_vs_rhp_to_date"].mean()
+                favorable = group["bats"].isin(["L", "S"])
+                same_hand = group["bats"].eq("R")
+            elif opposing_hand == "L":
+                platoon_woba = group["batter_woba_vs_lhp_to_date"].mean()
+                favorable = group["bats"].isin(["R", "S"])
+                same_hand = group["bats"].eq("L")
+            else:
+                platoon_woba = np.nan
+                favorable = pd.Series(False, index=group.index)
+                same_hand = pd.Series(False, index=group.index)
 
             return pd.Series(
                 {
@@ -399,6 +415,9 @@ class FeatureBuilder:
                     "lineup_lefty_ratio": group["bats"].isin(["L", "S"]).mean(),
                     "lineup_vs_rhp_woba": group["batter_woba_vs_rhp_to_date"].mean(),
                     "lineup_vs_lhp_woba": group["batter_woba_vs_lhp_to_date"].mean(),
+                    "lineup_platoon_woba": platoon_woba,
+                    "lineup_platoon_advantage_ratio": favorable.mean(),
+                    "lineup_same_hand_ratio": same_hand.mean(),
                     "lineup_statcast_xwoba": group["batter_statcast_xwoba_to_date"].mean(),
                     "lineup_statcast_woba": group["batter_statcast_woba_to_date"].mean(),
                     "lineup_hard_hit_rate": group["batter_hard_hit_rate_to_date"].mean(),
@@ -408,6 +427,41 @@ class FeatureBuilder:
             )
 
         return out.groupby(["game_id", "team"], as_index=False).apply(aggregate, include_groups=False).reset_index(drop=True)
+
+    def _lineup_matchup_context(self, games: pd.DataFrame, batting_logs: pd.DataFrame) -> pd.DataFrame:
+        game_team = _team_game_rows(games)[["game_id", "team"]].copy()
+        if "opposing_pitcher_hand" in batting_logs.columns:
+            logs = batting_logs[["game_id", "team", "opposing_pitcher_hand"]].copy()
+            logs["opposing_sp_hand"] = logs["opposing_pitcher_hand"].astype(str).str.upper().str[0]
+            logs = logs[logs["opposing_sp_hand"].isin(["R", "L"])]
+            if not logs.empty:
+                from_logs = (
+                    logs.groupby(["game_id", "team"])["opposing_sp_hand"]
+                    .agg(lambda values: values.mode().iloc[0] if not values.mode().empty else np.nan)
+                    .reset_index()
+                )
+                game_team = game_team.merge(from_logs, on=["game_id", "team"], how="left")
+            else:
+                game_team["opposing_sp_hand"] = np.nan
+        else:
+            game_team["opposing_sp_hand"] = np.nan
+
+        if {"home_sp_hand", "away_sp_hand"}.issubset(games.columns):
+            hands = games[["game_id", "home_team", "away_team", "home_sp_hand", "away_sp_hand"]].copy()
+            home = hands[["game_id", "home_team", "away_sp_hand"]].rename(
+                columns={"home_team": "team", "away_sp_hand": "scheduled_opposing_sp_hand"}
+            )
+            away = hands[["game_id", "away_team", "home_sp_hand"]].rename(
+                columns={"away_team": "team", "home_sp_hand": "scheduled_opposing_sp_hand"}
+            )
+            scheduled = pd.concat([home, away], ignore_index=True)
+            scheduled["scheduled_opposing_sp_hand"] = scheduled["scheduled_opposing_sp_hand"].astype(str).str.upper().str[0]
+            scheduled.loc[~scheduled["scheduled_opposing_sp_hand"].isin(["R", "L"]), "scheduled_opposing_sp_hand"] = np.nan
+            game_team = game_team.merge(scheduled, on=["game_id", "team"], how="left")
+            game_team["opposing_sp_hand"] = game_team["opposing_sp_hand"].fillna(game_team["scheduled_opposing_sp_hand"])
+            game_team = game_team.drop(columns=["scheduled_opposing_sp_hand"])
+
+        return game_team
 
     def _fill_missing_batter_profiles(
         self,
@@ -787,6 +841,10 @@ class FeatureBuilder:
         out = features.copy()
         out["sp_fip_diff"] = out["away_sp_fip_season_to_date"] - out["home_sp_fip_season_to_date"]
         out["lineup_woba_diff"] = out["home_lineup_avg_woba"] - out["away_lineup_avg_woba"]
+        out["lineup_platoon_woba_diff"] = out["home_lineup_platoon_woba"] - out["away_lineup_platoon_woba"]
+        out["lineup_platoon_advantage_diff"] = (
+            out["home_lineup_platoon_advantage_ratio"] - out["away_lineup_platoon_advantage_ratio"]
+        )
         out["bullpen_fatigue_diff"] = out["away_bullpen_fatigue_score"] - out["home_bullpen_fatigue_score"]
         out["team_woba_diff"] = out["home_team_woba_season_to_date"] - out["away_team_woba_season_to_date"]
         out["lineup_statcast_xwoba_diff"] = out["home_lineup_statcast_xwoba"] - out["away_lineup_statcast_xwoba"]

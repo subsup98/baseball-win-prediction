@@ -1,0 +1,20 @@
+{
+  "features": [
+    "data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv"
+  ],
+  "holdout_seasons": [
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "models": [
+    "elo",
+    "logistic",
+    "random_forest"
+  ],
+  "name": "season_holdout_confirmed_2021_2025_with_park_factors_statcast",
+  "output_dir": "outputs/experiments/versioned",
+  "prediction_mode": "confirmed_lineup",
+  "versioned_output": true
+}

@@ -65,20 +65,32 @@
 - [x] `pybaseball` data extra 설치/확인
 - [x] 2024-04-01~2024-04-07 Statcast event smoke test 수집
 - [x] Statcast smoke test 집계/merge/feature/품질 리포트 생성
+- [x] 2021-2025 Statcast 포함 feature/report 재생성 운영 스크립트 추가
+- [x] Retrosheet 백업 source 표준 변환 경로 구현
+- [x] Chadwick 기반 `id_map.csv` 구축
+- [x] Calibration plot 이미지 저장 기능 추가
+- [x] Feature importance 기반 설명 리포트 추가
+- [x] FanGraphs 보조 지표 수집 방식 확정
+- [x] 공식 라인업/예상 라인업 source 최종 결정
+- [x] weather source 결정 및 `weather` 테이블 자동화
+- [x] SHAP 기반 설명 리포트 경로 추가
+- [x] 실험별 config 파일 도입
+- [x] 실험 결과 버전 관리 방식 확정
+- [x] 타자/투수 handedness matchup 정교화
 
 ## 2. 다음 작업
 
 - [x] MLB Stats API에서 `games.csv` 초안용 schedule 원천 데이터 수집 가능
 - [x] MLB Stats API schedule CSV를 표준 `games.csv` schema로 변환
 - [x] MLB Stats API boxscore JSON을 표준 `lineups.csv`, `batting_logs.csv`, `pitcher_logs.csv`로 변환
-- [ ] Baseball Savant / Statcast에서 2021-2025 전체 `statcast_events.csv` 수집
+- [x] Baseball Savant / Statcast에서 2021-2025 전체 `statcast_events.csv` 수집
 - [x] Statcast event row를 `batting_logs.csv` / `pitcher_logs.csv` 계산에 사용할 수 있게 집계
-- [ ] Retrosheet CSV에서 historical `gameinfo`, `teamstats`, `batting`, `pitching` 수집
-- [ ] Retrosheet 데이터를 `games.csv`, `lineups.csv`, `weather.csv` 백업 source로 변환
-- [ ] FanGraphs에서 wOBA, wRC+, FIP, K-BB%, park factor 보조 데이터 수집 방식 확정
-- [ ] Lahman 또는 Chadwick register 기반 `id_map.csv` 구축
-- [ ] 공식 라인업/예상 라인업 source 최종 결정
-- [ ] weather source 결정 및 `weather` 테이블 자동화
+- [x] Retrosheet CSV에서 historical `gameinfo`, `teamstats`, `batting`, `pitching` 수집
+- [x] Retrosheet 데이터를 `games.csv`, `lineups.csv`, `weather.csv` 백업 source로 변환
+- [x] FanGraphs에서 wOBA, wRC+, FIP, K-BB%, park factor 보조 데이터 수집 방식 확정
+- [x] Lahman 또는 Chadwick register 기반 `id_map.csv` 구축
+- [x] 공식 라인업/예상 라인업 source 최종 결정
+- [x] weather source 결정 및 `weather` 테이블 자동화
 - [x] park factor source 결정 및 시즌별 보정 방식 확정
 - [x] 2021-2025 최근 5시즌 schedule 수집
 - [x] 2021-2025 최근 5시즌 boxscore JSON 수집
@@ -88,12 +100,13 @@
 - [x] 실제 데이터 기준 Feature null-rate 리포트 생성
 - [x] 시즌별 holdout 백테스트 실행
 - [x] 모델별 성능 리포트 자동 생성
-- [ ] Calibration plot 이미지 저장 기능 추가
-- [ ] Feature importance / SHAP 기반 설명 기능 추가
+- [x] Calibration plot 이미지 저장 기능 추가
+- [x] Feature importance 기반 설명 리포트 추가
+- [x] SHAP 기반 설명 기능 추가
 
 ## 3. 연구 확장
 
-- [ ] 타자/투수 handedness matchup 정교화
+- [x] 타자/투수 handedness matchup 정교화
 - [ ] 라인업 확정 전 예상 라인업 confidence Feature 추가
 - [ ] 선수 부상/휴식/결장 신호 추가
 - [ ] 팀 이동거리와 시차 Feature 추가
@@ -106,11 +119,11 @@
 
 ## 4. 운영 기준
 
-- [ ] 데이터 갱신 명령 표준화
-- [ ] 학습/검증 실행 명령 표준화
-- [ ] 결과물 저장 디렉터리 표준화
-- [ ] 실험별 config 파일 도입
-- [ ] 실험 결과 버전 관리 방식 확정
+- [x] 데이터 갱신 명령 표준화
+- [x] 학습/검증 실행 명령 표준화
+- [x] 결과물 저장 디렉터리 표준화
+- [x] 실험별 config 파일 도입
+- [x] 실험 결과 버전 관리 방식 확정
 
 ## 2026-05-19 데이터 수집 완료 기록
 
@@ -237,16 +250,16 @@ Best model by log_loss with park factors:
 
 다음 우선순위:
 
-- [ ] `humidity` 결측 100% 해소를 위한 weather source 결정 및 자동화
+- [x] `humidity` 결측 100% 해소를 위한 weather source 결정 및 자동화
 - [x] MLB Stats API boxscore를 temperature/wind/roof primary source로 사용하도록 파서 보강
 - [x] `humidity` 결측 100% 해소를 위한 별도 weather source 결정 및 자동화
-- [ ] Baseball Savant / Statcast event 수집 및 투타 로그 집계 연동
-- [ ] Retrosheet 백업 source 변환 경로 구현
-- [ ] FanGraphs 보조 지표 수집 방식 확정
-- [ ] Lahman 또는 Chadwick register 기반 `id_map.csv` 구축
-- [ ] Calibration plot 이미지 저장 기능 추가
-- [ ] Feature importance / SHAP 기반 설명 리포트 추가
-- [ ] 데이터 갱신/학습/검증 명령과 결과 디렉터리 운영 표준화
+- [x] Baseball Savant / Statcast event 수집 및 투타 로그 집계 연동
+- [x] Retrosheet 백업 source 변환 경로 구현
+- [x] FanGraphs 보조 지표 수집 방식 확정
+- [x] Lahman 또는 Chadwick register 기반 `id_map.csv` 구축
+- [x] Calibration plot 이미지 저장 기능 추가
+- [x] Feature importance / SHAP 기반 설명 리포트 추가
+- [x] 데이터 갱신/학습/검증 명령과 결과 디렉터리 운영 표준화
 
 ## 2026-05-20 Weather 1차 보강 완료 기록
 
@@ -281,8 +294,8 @@ is_dome=0  1972 games
 
 - [x] MLB Stats API live feed에 습도/상세 날씨가 존재하는지 샘플 수집으로 확인
 - [x] 샘플 live feed에는 `condition`, `temp`, `wind`만 있고 `humidity`가 없음을 확인
-- [ ] 외부 historical weather source 후보 확정
-- [ ] 외부 source 사용 시 venue 위치/경기 시각 기준 weather join 구현
+- [x] 외부 historical weather source 후보 확정
+- [x] 외부 source 사용 시 venue 위치/경기 시각 기준 weather join 구현
 
 ## 2026-05-20 Weather 2차 보강 완료 기록
 
@@ -361,9 +374,9 @@ park factor 포함 holdout 기준 best model:
 - [x] `pybaseball` data extra 설치/확인
 - [x] 2024-04-01~2024-04-07 Statcast smoke test 수집
 - [x] 2024-04-01~2024-04-07 Statcast 포함 feature/품질 리포트 생성
-- [ ] 2021-2025 Statcast event CSV 실제 수집
-- [ ] 2021-2025 표준 로그에 Statcast 품질 컬럼 병합
-- [ ] Statcast 포함 feature/품질/holdout 리포트 별도 생성
+- [x] 2021-2025 Statcast event CSV 실제 수집
+- [x] 2021-2025 표준 로그에 Statcast 품질 컬럼 병합
+- [x] Statcast 포함 feature/품질/holdout 리포트 별도 생성
 
 Statcast smoke test 산출물:
 

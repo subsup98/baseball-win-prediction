@@ -211,6 +211,15 @@ def _metadata_lookup(people: pd.DataFrame, column: str) -> dict[int, object]:
     }
 
 
+def _lookup_player_metadata(lookup: dict[int, object], player_id: object) -> object:
+    if pd.isna(player_id):
+        return np.nan
+    try:
+        return lookup.get(int(float(player_id)), np.nan)
+    except (TypeError, ValueError):
+        return np.nan
+
+
 def standardize_mlb_stats_api_boxscores(
     *,
     schedule_csv: str | Path,
@@ -257,6 +266,8 @@ def standardize_mlb_stats_api_boxscores(
                 "away_team": away_team,
                 "home_sp_id": game.get("home_sp_id"),
                 "away_sp_id": game.get("away_sp_id"),
+                "home_sp_hand": _lookup_player_metadata(throws_by_player, game.get("home_sp_id")),
+                "away_sp_hand": _lookup_player_metadata(throws_by_player, game.get("away_sp_id")),
                 "home_score": game.get("home_score"),
                 "away_score": game.get("away_score"),
                 "venue_id": game.get("venue_id"),

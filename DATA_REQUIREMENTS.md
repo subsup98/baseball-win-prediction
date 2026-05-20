@@ -94,6 +94,9 @@ lineup_bottom4_ops
 lineup_lefty_ratio
 lineup_vs_rhp_woba
 lineup_vs_lhp_woba
+lineup_platoon_woba
+lineup_platoon_advantage_ratio
+lineup_same_hand_ratio
 ```
 
 필요 raw 값:
@@ -394,9 +397,9 @@ pitching.csv
 
 역할:
 
-- 검증된 고급 세이버 지표 보조.
-- park factor 보조.
-- 모델 입력으로 쓸 때는 반드시 경기 전 기준값인지 확인해야 한다.
+- 검증된 고급 세이버 지표 보조와 검산.
+- park factor 보조 비교.
+- 현재 운영 기준에서는 시즌 최종 leaderboard를 모델 입력에 직접 사용하지 않는다.
 
 필요 값:
 
@@ -423,6 +426,21 @@ park_factor_hr
 
 - 시즌 최종 FanGraphs 값을 과거 경기 Feature로 그대로 쓰면 데이터 누수다.
 - rolling 또는 season-to-date 계산이 안 되는 값은 보조/검산용으로 우선 사용한다.
+- 경기 전 시점으로 재구성 가능한 split/source가 확보되기 전까지 FanGraphs 값은 raw 보존과 품질 검산에만 사용한다.
+
+### 라인업 source 결정
+
+`confirmed_lineup`:
+
+- primary: MLB Stats API boxscore의 실제 출전 선수와 `battingOrder`.
+- fallback: Retrosheet `teamstats.csv`의 선발 라인업 컬럼.
+- 용도: historical backtest의 기준 feature set.
+
+`pre_lineup`:
+
+- primary 확정 전: MLB Stats API schedule의 probable pitcher만 고정 사용.
+- 예상 타순 source는 별도 raw source가 확정될 때까지 연구 확장 항목으로 둔다.
+- source 추가 시 `prediction_mode=pre_lineup`, `lineup_source`, `lineup_confidence`를 함께 기록한다.
 
 ### Lahman
 

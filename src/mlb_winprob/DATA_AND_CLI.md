@@ -195,6 +195,36 @@ sp_barrel_rate_allowed_to_date
 sp_avg_exit_velocity_allowed_to_date
 ```
 
+### Statcast full pipeline
+
+2021-2025 Statcast 포함 feature, 품질 리포트, holdout 리포트를 한 번에 재생성한다. 기본 실행은 이미 존재하는 시즌별 `data/raw/statcast/statcast_YYYY.csv`를 재사용한다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_statcast_feature_pipeline.py
+```
+
+원천 Statcast CSV부터 다시 수집하려면 `--collect`를 사용한다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_statcast_feature_pipeline.py `
+  --collect `
+  --workers 12
+```
+
+주요 산출물:
+
+```text
+data/raw/statcast/statcast_YYYY.csv
+data/standardized/statcast_YYYY/batting_quality.csv
+data/standardized/statcast_YYYY/pitching_quality.csv
+data/standardized/mlb_stats_api_YYYY/batting_logs_statcast.csv
+data/standardized/mlb_stats_api_YYYY/pitcher_logs_statcast.csv
+data/processed/features_confirmed_YYYY_with_park_factors_statcast.csv
+data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv
+outputs/quality/features_confirmed_2021_2025_with_park_factors_statcast/
+outputs/experiments/season_holdout_confirmed_2021_2025_with_park_factors_statcast/
+```
+
 ### collect-fangraphs
 
 ```powershell
@@ -212,6 +242,28 @@ mlb-winprob collect-retrosheet `
   --output data/raw/retrosheet/gameinfo.csv
 ```
 
+Retrosheet 개별 다운로드는 ZIP 원천을 받아 내부 CSV를 지정한 `.csv` 출력으로 추출한다. 2021-2025 백업 source를 표준 schema로 변환하려면 다음 명령을 사용한다.
+
+```powershell
+mlb-winprob standardize-retrosheet `
+  --gameinfo data/raw/retrosheet/gameinfo.csv `
+  --teamstats data/raw/retrosheet/teamstats.csv `
+  --batting data/raw/retrosheet/batting.csv `
+  --pitching data/raw/retrosheet/pitching.csv `
+  --output-dir data/standardized/retrosheet_2021_2025 `
+  --seasons 2021,2022,2023,2024,2025
+```
+
+생성 산출물:
+
+```text
+data/standardized/retrosheet_2021_2025/games.csv
+data/standardized/retrosheet_2021_2025/weather.csv
+data/standardized/retrosheet_2021_2025/lineups.csv
+data/standardized/retrosheet_2021_2025/batting_logs.csv
+data/standardized/retrosheet_2021_2025/pitcher_logs.csv
+```
+
 ### collect-lahman
 
 ```powershell
@@ -225,6 +277,28 @@ mlb-winprob collect-lahman `
 ```powershell
 mlb-winprob collect-chadwick-people `
   --output data/raw/chadwick/people.csv
+```
+
+Chadwick Register의 분할 `people-0.csv`~`people-f.csv`를 내려받아 하나의 `people.csv`로 합친다. ID crosswalk를 만들려면 다음 명령을 사용한다.
+
+```powershell
+mlb-winprob build-id-map `
+  --chadwick-people data/raw/chadwick/people.csv `
+  --mlb-people data/raw/mlb_stats_api/people_2021.csv data/raw/mlb_stats_api/people_2022.csv data/raw/mlb_stats_api/people_2023.csv data/raw/mlb_stats_api/people_2024.csv data/raw/mlb_stats_api/people_2025.csv `
+  --output data/processed/id_map.csv
+```
+
+생성되는 주요 컬럼:
+
+```text
+chadwick_key
+mlbam_id
+retrosheet_id
+bbref_id
+fangraphs_id
+bats
+throws
+primary_position
 ```
 
 ### download-url

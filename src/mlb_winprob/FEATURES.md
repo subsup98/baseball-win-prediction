@@ -52,6 +52,9 @@ game-level features
 - `lineup_lefty_ratio`
 - `lineup_vs_rhp_woba`
 - `lineup_vs_lhp_woba`
+- `lineup_platoon_woba`
+- `lineup_platoon_advantage_ratio`
+- `lineup_same_hand_ratio`
 
 ### 팀 흐름
 
@@ -93,6 +96,8 @@ game-level features
 ```text
 sp_fip_diff = away_sp_fip_season_to_date - home_sp_fip_season_to_date
 lineup_woba_diff = home_lineup_avg_woba - away_lineup_avg_woba
+lineup_platoon_woba_diff = home_lineup_platoon_woba - away_lineup_platoon_woba
+lineup_platoon_advantage_diff = home_lineup_platoon_advantage_ratio - away_lineup_platoon_advantage_ratio
 bullpen_fatigue_diff = away_bullpen_fatigue_score - home_bullpen_fatigue_score
 team_woba_diff = home_team_woba_season_to_date - away_team_woba_season_to_date
 ```

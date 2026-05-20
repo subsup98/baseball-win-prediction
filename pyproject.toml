@@ -24,6 +24,9 @@ boosters = [
 data = [
   "pybaseball>=2.2",
 ]
+explain = [
+  "shap>=0.45",
+]
 dev = [
   "pytest>=7.0",
 ]
