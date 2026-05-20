@@ -4,8 +4,14 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-data/
-outputs/
+data/*
+!data/processed/
+data/processed/*
+!data/processed/*.csv
+
+outputs/*
+!outputs/quality/
+!outputs/experiments/
 
 .env
 .DS_Store
