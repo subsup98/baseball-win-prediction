@@ -1,0 +1,5 @@
+holdout_season,rule_name,selected_model,selection_metric,selection_value,coverage
+2024,overall_log_loss,logistic,log_loss,0.6882323862776486,1.0
+2024,confidence_55,logistic,accuracy_conf_55,0.5832766825288919,0.6055990119390696
+2024,confidence_60,logistic,accuracy_conf_60,0.6027027027027027,0.3046521202140799
+2024,confidence_65,logistic,accuracy_conf_65,0.6392961876832844,0.14038699053108275

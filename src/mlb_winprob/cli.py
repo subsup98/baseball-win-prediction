@@ -28,7 +28,12 @@ from mlb_winprob.features import FeatureBuilder
 from mlb_winprob.id_map import write_id_map
 from mlb_winprob.park_factors import build_empirical_park_factors
 from mlb_winprob.prediction import build_prediction_result, simple_key_reasons
-from mlb_winprob.reporting import read_feature_tables, write_feature_quality_report, write_season_holdout_report
+from mlb_winprob.reporting import (
+    read_feature_tables,
+    write_expected_runs_holdout_report,
+    write_feature_quality_report,
+    write_season_holdout_report,
+)
 from mlb_winprob.retrosheet import standardize_retrosheet_tables
 from mlb_winprob.schemas import FeatureBuildConfig
 from mlb_winprob.standardize import standardize_mlb_stats_api_boxscores
@@ -43,6 +48,7 @@ def _add_common_raw_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--lineups", required=True)
     parser.add_argument("--weather")
     parser.add_argument("--park-factors")
+    parser.add_argument("--venues")
 
 
 def build_features_command(args: argparse.Namespace) -> None:
@@ -54,6 +60,7 @@ def build_features_command(args: argparse.Namespace) -> None:
         lineups=read_csv_table(args.lineups),
         weather=read_csv_table(args.weather) if args.weather else None,
         park_factors=read_csv_table(args.park_factors) if args.park_factors else None,
+        venues=read_csv_table(args.venues) if args.venues else None,
     )
     write_csv_table(features, args.output)
     print(f"Wrote {len(features)} feature rows to {args.output}")
@@ -103,6 +110,21 @@ def season_holdout_report_command(args: argparse.Namespace) -> None:
             row_count=len(features),
             column_count=features.shape[1],
         )
+    )
+    for name, path in paths.items():
+        print(f"Wrote {name}: {path}")
+
+
+def expected_runs_report_command(args: argparse.Namespace) -> None:
+    features = read_feature_tables(args.features)
+    model_values = [value.strip() for value in args.models.split(",") if value.strip()]
+    holdout_values = [int(value.strip()) for value in args.holdout_seasons.split(",") if value.strip()]
+    paths = write_expected_runs_holdout_report(
+        features,
+        args.output_dir,
+        holdout_seasons=holdout_values,
+        model_names=model_values,
+        prediction_mode=args.prediction_mode,
     )
     for name, path in paths.items():
         print(f"Wrote {name}: {path}")
@@ -497,6 +519,14 @@ def main() -> None:
     holdout_parser.add_argument("--models", default="elo,logistic,random_forest")
     holdout_parser.add_argument("--prediction-mode", choices=["pre_lineup", "confirmed_lineup"])
     holdout_parser.set_defaults(func=season_holdout_report_command)
+
+    expected_runs_parser = subparsers.add_parser("expected-runs-report")
+    expected_runs_parser.add_argument("--features", nargs="+", required=True)
+    expected_runs_parser.add_argument("--output-dir", required=True)
+    expected_runs_parser.add_argument("--holdout-seasons", default="2022,2023,2024,2025")
+    expected_runs_parser.add_argument("--models", default="ridge,random_forest_regressor")
+    expected_runs_parser.add_argument("--prediction-mode", choices=["pre_lineup", "confirmed_lineup"])
+    expected_runs_parser.set_defaults(func=expected_runs_report_command)
 
     park_parser = subparsers.add_parser("build-empirical-park-factors")
     park_parser.add_argument("--standardized-dirs", nargs="+", required=True)

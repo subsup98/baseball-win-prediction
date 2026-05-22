@@ -1,0 +1,13 @@
+# Feature Group Ablation
+
+Positive `mean_log_loss_delta_vs_full` means removing that group made log loss worse, so the group helped the full model.
+
+| variant | model_name | mean_log_loss | mean_log_loss_delta_vs_full | mean_accuracy | mean_accuracy_delta_vs_full | mean_feature_count |
+| --- | --- | --- | --- | --- | --- | --- |
+| without_lineup_optional | random_forest | 0.6793855431432032 | -0.00017384707761061713 | 0.5690916260480782 | 0.001748759417667528 | 142.5 |
+| without_bullpen_role | random_forest | 0.6794244760498537 | -0.00013491417096017644 | 0.5650793650793651 | -0.002263501551045599 | 159.5 |
+| full | random_forest | 0.6795593902208139 | 0.0 | 0.5673428666304107 | 0.0 | 161.5 |
+| without_all_research_groups | random_forest | 0.6797695402470776 | 0.00021015002626378898 | 0.5648729260800986 | -0.0024699405503119942 | 109.5 |
+| baseline_like_columns | random_forest | 0.6798030156706002 | 0.00024362544978637213 | 0.5649758067385349 | -0.0023670598918757724 | 106.5 |
+| without_travel | random_forest | 0.6799367229523658 | 0.00037733273155204916 | 0.5634327662825902 | -0.003910100347820494 | 144.5 |
+| without_pitch_stuff | random_forest | 0.6799416042794039 | 0.00038221405859001356 | 0.5638439924302876 | -0.003498874200123042 | 147.5 |

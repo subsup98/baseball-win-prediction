@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--processed-root", default="data/processed")
     parser.add_argument("--outputs-root", default="outputs")
     parser.add_argument("--park-factors", default="data/processed/park_factors_empirical_previous_season_2022_2026.csv")
+    parser.add_argument("--venues", default="data/raw/mlb_stats_api/venues_2021_2025.csv")
     parser.add_argument("--dataset-name", default="features_confirmed_2021_2025_with_park_factors_statcast")
     parser.add_argument("--models", default="elo,logistic,random_forest")
     parser.add_argument("--holdout-seasons", default="2022,2023,2024,2025")
@@ -127,6 +128,7 @@ def build_features(
     batting_logs: Path,
     pitcher_logs: Path,
     park_factors: Path,
+    venues: Path | None,
     output: Path,
     prediction_mode: str,
 ) -> Path:
@@ -138,6 +140,7 @@ def build_features(
         lineups=read_csv_table(standardized_dir / "lineups.csv"),
         weather=read_csv_table(standardized_dir / "weather.csv"),
         park_factors=read_csv_table(park_factors),
+        venues=read_csv_table(venues) if venues is not None and venues.exists() else None,
     )
     write_csv_table(features, output)
     print(f"{season}: wrote feature rows={len(features)} columns={features.shape[1]}")
@@ -175,6 +178,7 @@ def main() -> None:
                 batting_logs,
                 pitcher_logs,
                 Path(args.park_factors),
+                Path(args.venues) if args.venues else None,
                 season_feature_paths[season],
                 args.prediction_mode,
             )

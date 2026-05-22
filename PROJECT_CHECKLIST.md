@@ -107,15 +107,82 @@
 ## 3. 연구 확장
 
 - [x] 타자/투수 handedness matchup 정교화
-- [ ] 라인업 확정 전 예상 라인업 confidence Feature 추가
-- [ ] 선수 부상/휴식/결장 신호 추가
-- [ ] 팀 이동거리와 시차 Feature 추가
-- [ ] 불펜 high-leverage role 자동 추정
-- [ ] 선발투수 pitch-mix / Stuff 계열 Feature 검토
-- [ ] 딥러닝용 선수 embedding 실험 설계
-- [ ] 모델 앙상블 selection rule 확정
-- [ ] 예상 득점 모델 확장
-- [ ] KBO 확장 가능 schema 점검
+- [x] 라인업 확정 전 예상 라인업 confidence Feature 추가
+- [x] 선수 부상/휴식/결장 신호 추가
+- [x] 팀 이동거리와 시차 Feature 추가
+- [x] 불펜 high-leverage role 자동 추정
+- [x] 선발투수 pitch-mix / Stuff 계열 Feature 검토
+- [x] 딥러닝용 선수 embedding 실험 설계
+- [x] 모델 앙상블 selection rule 확정
+- [x] 예상 득점 모델 확장
+- [x] KBO 확장 가능 schema 점검
+
+### 연구 확장 우선순위 메모
+
+다음 단계는 실제 경기 전 예측 품질에 바로 붙을 가능성이 높은 항목부터 진행한다.
+
+1. 라인업 확정 전 예상 라인업 confidence Feature 추가
+   - `pre_lineup`용 예상 타순 source 후보 확정
+   - `lineup_source`, `lineup_confidence`, `expected_batting_order` 표준 컬럼 검토
+   - confirmed lineup 대비 과거 예상 라인업 적중률 산출
+   - confidence band별 holdout 성능 비교
+
+2. 팀 이동거리와 시차 Feature 추가
+   - venue 좌표 기반 팀별 이동거리 계산
+   - home/away 연속 경기, 원정 연전, getaway/travel day 신호 추가
+   - timezone 변화와 휴식일 결합 feature 검토
+   - 이동거리 feature의 null-rate 및 holdout 성능 영향 확인
+
+3. 불펜 high-leverage role 자동 추정
+   - save/hold, games finished, 최근 등판 순서 기반 role score 설계
+   - closer/setup/middle relief proxy feature 생성
+   - high-leverage pitcher fatigue를 팀 bullpen fatigue와 분리 평가
+   - 기존 `is_high_leverage` 수동/원천값과 자동 추정값 비교
+
+4. 선수 부상/휴식/결장 신호 추가
+   - IL, day-to-day, 최근 결장, 라인업 제외 신호 source 조사
+   - 주전 결장 여부와 lineup strength 감소량 feature 설계
+   - source 신뢰도와 경기 전 이용 가능 시점 기록
+
+5. 선발투수 pitch-mix / Stuff 계열 Feature 검토
+   - Statcast pitch type 비율, 구속, 회전, whiff, called-strike/whiff 계열 후보 정리
+   - 선발투수 season-to-date 및 최근 N경기 pitch profile 계산
+   - Stuff 계열 feature가 기존 FIP/xwOBA 허용 feature를 보완하는지 확인
+
+완료 반영:
+
+- 라인업 confidence/availability/rest/injury signal과 이전 경기 라인업 continuity feature를 추가했다.
+- venue 좌표와 timezone offset이 있으면 팀별 이동거리, 휴식일, 시차 변화, 원정/홈 연속 경기 feature를 계산한다.
+- RP save/hold/games finished/save opportunity 누적으로 high-leverage role fatigue proxy를 자동 추정한다.
+- Statcast pitch type, whiff, fastball velocity, spin 기반 선발투수 pitch-mix/Stuff feature를 추가했다.
+- `.venv` 기준 `pytest` 전체 통과 및 2021 시즌 feature build smoke test를 확인했다.
+
+6. 모델 앙상블 selection rule 확정
+   - 시즌별 best model 고정 대신 confidence/coverage 구간별 selection rule 검토
+   - random forest, logistic, Elo, booster 모델의 calibration 차이 비교
+   - rule 기반 선택과 stacking/blending 성능 비교
+
+7. 예상 득점 모델 확장
+   - 홈/원정 예상 득점, run differential, total runs target 설계
+   - 승률 모델 feature와 공유 가능한 feature set 분리
+   - 득점 예측 calibration 및 betting line 미사용 원칙 유지
+
+8. 딥러닝용 선수 embedding 실험 설계
+   - 선수 ID embedding, lineup sequence, pitcher/batter interaction 입력 구조 검토
+   - season holdout에서 누수 없는 embedding 학습 방식 정리
+   - tabular baseline 대비 이득이 있는지 소규모 실험 설계
+
+9. KBO 확장 가능 schema 점검
+   - MLB/KBO 공통 `games`, `lineups`, `batting_logs`, `pitcher_logs`, `weather`, `park_factors` schema 비교
+   - KBO에서 대체 source가 필요한 컬럼 목록 작성
+   - 리그 공통 feature와 리그별 feature 분리 기준 정리
+
+완료 반영:
+
+- `season-holdout-report`에 `model_selection_rules.csv` 산출물을 추가했다.
+- `expected-runs-report` CLI를 추가해 홈/원정 예상 득점, total runs, run differential holdout metric을 생성한다.
+- 선수 embedding 실험 설계를 `src/mlb_winprob/RESEARCH_EXTENSIONS.md`에 정리했다.
+- KBO schema gap과 최소 smoke test 기준을 `src/mlb_winprob/KBO_SCHEMA_GAP.md`에 정리했다.
 
 ## 4. 운영 기준
 
@@ -398,3 +465,120 @@ away_lineup_statcast_xwoba non_null: 72 / 90
 home_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
 away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
 ```
+
+## 2026-05-22 모델 baseline 확정 및 다음 작업
+
+### 완료
+
+- [x] `MODEL_IMPROVEMENT_LOG.md` 추가
+  - 모델 후보, 실험 이유, metric, 이전 대비 변화, 채택/보류/폐기 판정을 누적 기록한다.
+- [x] 현재 모델 baseline 문서화
+  - main baseline: `full + random_forest`
+  - confidence-band challenger: `full + random_forest_shallow`
+  - calibration challenger: `calibrated_logistic`
+  - watchlist: `without_bullpen_role + random_forest`
+- [x] `README.md`, `src/mlb_winprob/MODELS_AND_EXPERIMENTS.md`에 현재 baseline 요약 추가
+- [x] `without_bullpen_role` feature variant 생성
+  - `data/processed/model_experiments/features_confirmed_2021_2025_with_park_factors_statcast_without_bullpen_role.csv`
+- [x] bullpen role 제거 10-seed 안정성 검증
+  - output: `outputs/experiments/model_multiseed_rf_bullpen_role_confirmed_2021_2025/`
+  - result: 평균 log loss/accuracy는 소폭 개선, log-loss win rate 55%
+  - decision: baseline 교체는 보류, watchlist 유지
+- [x] confidence-band selection rule 비교
+  - output: `outputs/experiments/confidence_band_selection_rules_confirmed_2021_2025/`
+  - result: `random_forest_shallow`는 `accuracy_conf_60` 개선, coverage 및 overall log loss 악화
+  - decision: 기본 모델은 `random_forest`, shallow는 고확신 분석용 challenger
+- [x] `pre_lineup` readiness 점검
+  - output: `outputs/experiments/pre_lineup_readiness_confirmed_2021_2025/`
+  - result: 현재 2021-2025 lineup/feature는 모두 `confirmed_lineup`
+  - decision: projected/expected lineup source 확보 전까지 pre-game 성능 평가는 blocked
+- [x] expected-runs 2022-2025 전체 holdout 재실행
+  - output: `outputs/experiments/expected_runs_confirmed_2021_2025_full_check/`
+  - decision: 별도 리포트로는 유효하지만 win-probability feature로 붙이려면 OOF prediction feature가 필요
+- [x] booster dependency 설치 및 LightGBM/XGBoost/CatBoost 비교
+  - output: `outputs/experiments/model_test_boosters_confirmed_2021_2025_with_park_factors_statcast/`
+  - decision: 기본 설정 기준 booster는 RF를 대체하지 못함. CatBoost만 추후 튜닝 후보
+- [x] 전체 테스트 재실행
+  - command: `.\.venv\Scripts\python.exe -m pytest --basetemp .pytest_tmp`
+  - result: `38 passed`
+
+### 다음 우선순위
+
+1. [x] `pre_lineup` source 확보 및 schema 검증
+   - projected/expected lineup source 후보 조사
+   - 표준 `lineups.csv`에 `prediction_mode=pre_lineup` row를 만들 수 있는지 검증
+   - `lineup_source`, `lineup_confidence`, `expected_batting_order`, `is_expected_starter` 실제 source 매핑 확인
+   - `pre_lineup` feature build smoke test 생성
+   - 완료 반영:
+     - `PRE_LINEUP_SOURCE_PLAN.md` 추가
+     - pre-lineup 모드가 confirmed rows로 fallback하지 않도록 수정
+     - `data/smoke_pre_lineup/features_pre_lineup_2024-04-01.csv` smoke build 성공
+
+2. [x] Expected-runs OOF feature 실험
+   - season holdout 기준으로 train season에서 득점 모델 학습
+   - holdout season에 대해 `expected_home_runs`, `expected_away_runs`, `expected_total_runs`, `expected_run_diff` 생성
+   - 해당 예측값을 win-probability feature에 추가
+   - `full + random_forest` baseline 대비 log loss/brier/accuracy 변화 측정
+   - 완료 반영:
+     - `scripts/run_expected_runs_feature_experiment.py` 추가
+     - ridge/RF-regressor OOF expected-runs 모두 평균 log loss와 accuracy 개선 실패
+     - expected-runs는 adjacent report로 유지
+
+3. [x] Bullpen high-leverage role proxy 개선
+   - save/hold/games finished/save opportunity 기반 role score 재설계
+   - 최근 등판 순서와 leverage proxy 가중치 점검
+   - `without_bullpen_role` watchlist와 개선판을 10-seed로 재비교
+   - 완료 반영:
+     - estimated role score IP contribution을 `0..1`로 cap
+     - `outputs/experiments/model_multiseed_rf_bullpen_role_capped_confirmed_2021_2025/`
+     - baseline 판정 변화 없음
+
+4. [x] CatBoost targeted tuning
+   - 현재 기본 CatBoost는 RF보다 약함
+   - depth, learning_rate, l2_leaf_reg, iterations 후보를 좁혀 소규모 holdout 비교
+   - calibration 적용 전/후 비교
+   - RF보다 개선되지 않으면 booster 계열은 장기 보류
+   - 완료 반영:
+     - `catboost_shallow`, `catboost_l2`, `catboost_lr02` 후보 추가
+     - `outputs/experiments/model_test_catboost_tuning_confirmed_2021_2025_with_park_factors_statcast/`
+     - RF 평균 log loss를 넘지 못해 season-dependent challenger로만 유지
+
+5. [x] Feature stability / SHAP 정리
+   - 시즌별 feature importance top feature 비교
+   - SHAP summary의 시즌 간 안정성 확인
+   - 유지 feature, watchlist feature, pruning 후보 feature를 `MODEL_IMPROVEMENT_LOG.md` 또는 별도 summary에 정리
+   - 완료 반영:
+     - `scripts/summarize_feature_stability.py` 추가
+     - `outputs/experiments/feature_stability_confirmed_2021_2025/`
+     - 안정 feature와 low-stability watch feature CSV 생성
+
+6. [x] 실험 runbook 정리
+   - 데이터 갱신 -> feature build -> quality report -> holdout -> model test -> decision log 업데이트 순서 문서화
+   - generated output과 source/config 파일 구분
+   - pytest는 Windows temp 이슈를 피하기 위해 `--basetemp .pytest_tmp` 사용 권장
+   - 완료 반영:
+     - `EXPERIMENT_RUNBOOK.md` 추가
+
+### 다음 우선순위
+
+1. [ ] 실제 projected lineup source 1개를 선택해 collector/normalizer 구현
+   - 후보 source의 ToS/API 조건 확인
+   - `captured_at` 기준 pre-game snapshot 저장
+   - historical backfill 가능 여부 확인
+
+2. [ ] `pre_lineup` 실제 source smoke test
+   - 실제 source row로 `lineups_projected_*.csv` 생성
+   - `build-features --prediction-mode pre_lineup` 실행
+   - confirmed-lineup feature 대비 null-rate와 성능 차이 확인
+
+3. [ ] CatBoost season-dependent selection rule 검증
+   - 2022/2024/2025 일부 holdout에서 CatBoost가 best였으므로 season별 switch가 일반화되는지 multi-seed로 확인
+   - RF default를 대체하지 않고 challenger rule로만 검증
+
+4. [ ] Stable feature group ablation
+   - feature stability 결과를 기반으로 stable group / low-stability group ablation 구성
+   - one-off feature 삭제 대신 그룹 단위로 log loss 영향을 확인
+
+5. [ ] Windows test warning 정리
+   - sklearn/joblib subprocess reader thread의 cp949 decode warning 원인 확인
+   - 테스트 통과에는 영향 없지만 CI/로그 품질 개선 후보

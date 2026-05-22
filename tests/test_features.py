@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from mlb_winprob.features import FeatureBuilder
 from mlb_winprob.schemas import FeatureBuildConfig
@@ -18,6 +19,9 @@ def _raw_tables():
                 "home_score": 5,
                 "away_score": 3,
                 "venue_id": "park",
+                "venue_latitude": 40.0,
+                "venue_longitude": -75.0,
+                "venue_timezone_offset": -4,
             },
             {
                 "game_id": "g2",
@@ -30,6 +34,9 @@ def _raw_tables():
                 "home_score": 2,
                 "away_score": 4,
                 "venue_id": "park",
+                "venue_latitude": 34.0,
+                "venue_longitude": -118.0,
+                "venue_timezone_offset": -7,
             },
         ]
     )
@@ -115,6 +122,8 @@ def _raw_tables():
                 "batters_faced": 24,
                 "pitches": 92,
                 "statcast_batters_faced": 24,
+                "statcast_pitches": 92,
+                "statcast_whiffs": 12,
                 "statcast_batted_balls_allowed": 16,
                 "statcast_hard_hit_balls_allowed": 5,
                 "statcast_barrels_allowed": 1,
@@ -123,6 +132,19 @@ def _raw_tables():
                 "statcast_woba_allowed_sum": 7.0,
                 "statcast_woba_allowed_count": 24,
                 "statcast_launch_speed_allowed_sum": 1400,
+                "statcast_release_speed_sum": 92 * 95,
+                "statcast_release_speed_count": 92,
+                "statcast_fastball_release_speed_sum": 65 * 96,
+                "statcast_fastball_release_speed_count": 65,
+                "statcast_spin_rate_sum": 92 * 2300,
+                "statcast_spin_rate_count": 92,
+                "statcast_pitch_ff": 50,
+                "statcast_pitch_si": 10,
+                "statcast_pitch_fc": 5,
+                "statcast_pitch_sl": 20,
+                "statcast_pitch_cu": 5,
+                "statcast_pitch_ch": 2,
+                "statcast_pitch_fs": 0,
             },
             {
                 "game_id": "g1",
@@ -140,6 +162,8 @@ def _raw_tables():
                 "batters_faced": 23,
                 "pitches": 101,
                 "statcast_batters_faced": 23,
+                "statcast_pitches": 101,
+                "statcast_whiffs": 8,
                 "statcast_batted_balls_allowed": 17,
                 "statcast_hard_hit_balls_allowed": 7,
                 "statcast_barrels_allowed": 2,
@@ -148,6 +172,19 @@ def _raw_tables():
                 "statcast_woba_allowed_sum": 9.0,
                 "statcast_woba_allowed_count": 23,
                 "statcast_launch_speed_allowed_sum": 1500,
+                "statcast_release_speed_sum": 101 * 93,
+                "statcast_release_speed_count": 101,
+                "statcast_fastball_release_speed_sum": 55 * 94,
+                "statcast_fastball_release_speed_count": 55,
+                "statcast_spin_rate_sum": 101 * 2200,
+                "statcast_spin_rate_count": 101,
+                "statcast_pitch_ff": 45,
+                "statcast_pitch_si": 5,
+                "statcast_pitch_fc": 5,
+                "statcast_pitch_sl": 25,
+                "statcast_pitch_cu": 10,
+                "statcast_pitch_ch": 10,
+                "statcast_pitch_fs": 1,
             },
             {
                 "game_id": "g1",
@@ -166,6 +203,10 @@ def _raw_tables():
                 "pitches": 22,
                 "is_closer": 1,
                 "is_high_leverage": 1,
+                "saves": 1,
+                "holds": 0,
+                "games_finished": 1,
+                "save_opportunities": 1,
             },
             {
                 "game_id": "g1",
@@ -184,6 +225,10 @@ def _raw_tables():
                 "pitches": 45,
                 "is_closer": 0,
                 "is_high_leverage": 1,
+                "saves": 0,
+                "holds": 1,
+                "games_finished": 0,
+                "save_opportunities": 0,
             },
             {
                 "game_id": "g2",
@@ -231,6 +276,11 @@ def _raw_tables():
                     "batting_order": order,
                     "bats": "L" if order == 1 else "R",
                     "prediction_mode": "confirmed_lineup",
+                    "lineup_confidence": 0.95,
+                    "is_available": 1,
+                    "is_expected_starter": 1,
+                    "rest_signal": 0,
+                    "injury_status": "",
                 }
             )
         for order, player_id in enumerate(["A1", "A2", "A3"], start=1):
@@ -242,6 +292,11 @@ def _raw_tables():
                     "batting_order": order,
                     "bats": "R",
                     "prediction_mode": "confirmed_lineup",
+                    "lineup_confidence": 0.90,
+                    "is_available": 1,
+                    "is_expected_starter": 1,
+                    "rest_signal": 1 if game_id == "g2" and order == 3 else 0,
+                    "injury_status": "out" if game_id == "g2" and order == 3 else "",
                 }
             )
     lineups = pd.DataFrame(lineup_rows)
@@ -314,6 +369,9 @@ def test_optional_statcast_quality_features_are_leakage_safe():
     assert g2["sp_statcast_xwoba_allowed_diff"] == (
         g2["away_sp_statcast_xwoba_allowed_to_date"] - g2["home_sp_statcast_xwoba_allowed_to_date"]
     )
+    assert g2["home_sp_whiff_rate_to_date"] == 12 / 92
+    assert g2["home_sp_avg_fastball_velocity_to_date"] == 96
+    assert g2["home_sp_fastball_usage_to_date"] == (50 + 10 + 5) / 92
 
 
 def test_lineup_platoon_features_use_opposing_starter_hand():
@@ -328,3 +386,121 @@ def test_lineup_platoon_features_use_opposing_starter_hand():
     assert g2["lineup_platoon_advantage_diff"] == (
         g2["home_lineup_platoon_advantage_ratio"] - g2["away_lineup_platoon_advantage_ratio"]
     )
+
+
+def test_lineup_confidence_absence_travel_and_bullpen_role_features():
+    features = _build_features()
+    g2 = features.loc[features["game_id"] == "g2"].iloc[0]
+
+    assert g2["home_lineup_confidence"] == pytest.approx(0.95)
+    assert g2["away_lineup_confidence"] == pytest.approx(0.90)
+    assert g2["away_lineup_injury_absence_signal_count"] == 1
+    assert g2["away_lineup_rest_signal_count"] == 1
+    assert g2["home_lineup_previous_starter_return_rate"] == 1.0
+    assert g2["home_travel_rest_days"] == 4
+    assert g2["home_travel_distance_miles"] > 2000
+    assert g2["home_travel_timezone_shift"] == -3
+    assert g2["home_estimated_high_leverage_role_fatigue_score"] == 0
+
+
+def test_pre_lineup_mode_does_not_fall_back_to_confirmed_rows():
+    games, batting_logs, pitcher_logs, lineups, weather, park_factors = _raw_tables()
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode="pre_lineup"))
+
+    features = builder.build(
+        games=games,
+        batting_logs=batting_logs,
+        pitcher_logs=pitcher_logs,
+        lineups=lineups,
+        weather=weather,
+        park_factors=park_factors,
+    )
+    g2 = features.loc[features["game_id"] == "g2"].iloc[0]
+
+    assert features["prediction_mode"].eq("pre_lineup").all()
+    assert pd.isna(g2["home_lineup_player_count"])
+    assert pd.isna(g2["away_lineup_confidence"])
+
+
+def test_pre_lineup_mode_uses_projected_alias_rows():
+    games, batting_logs, pitcher_logs, lineups, weather, park_factors = _raw_tables()
+    projected = lineups.copy()
+    projected["prediction_mode"] = "projected"
+    projected["lineup_confidence"] = 0.55
+    combined_lineups = pd.concat([lineups, projected], ignore_index=True)
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode="pre_lineup"))
+
+    features = builder.build(
+        games=games,
+        batting_logs=batting_logs,
+        pitcher_logs=pitcher_logs,
+        lineups=combined_lineups,
+        weather=weather,
+        park_factors=park_factors,
+    )
+    g2 = features.loc[features["game_id"] == "g2"].iloc[0]
+
+    assert features["prediction_mode"].eq("pre_lineup").all()
+    assert g2["home_lineup_player_count"] == 3
+    assert g2["home_lineup_confidence"] == pytest.approx(0.55)
+
+
+def test_estimated_high_leverage_role_score_is_capped_for_fatigue():
+    games, _, pitcher_logs, *_ = _raw_tables()
+    games = pd.concat(
+        [
+            games,
+            pd.DataFrame(
+                [
+                    {
+                        "game_id": "g3",
+                        "game_date": "2024-04-06",
+                        "season": 2024,
+                        "home_team": "HOM",
+                        "away_team": "AWY",
+                        "home_sp_id": "HSP",
+                        "away_sp_id": "ASP",
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    pitcher_logs = pd.concat(
+        [
+            pitcher_logs,
+            pd.DataFrame(
+                [
+                    {
+                        "game_id": "g2",
+                        "game_date": "2024-04-05",
+                        "season": 2024,
+                        "player_id": "HRP",
+                        "team": "HOM",
+                        "is_start": 0,
+                        "innings_pitched": 1,
+                        "hits": 0,
+                        "home_runs": 0,
+                        "walks": 0,
+                        "hit_by_pitch": 0,
+                        "strikeouts": 1,
+                        "is_closer": 0,
+                        "is_high_leverage": 0,
+                        "saves": 0,
+                        "holds": 0,
+                        "games_finished": 0,
+                        "save_opportunities": 0,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    games["game_date"] = pd.to_datetime(games["game_date"])
+    pitcher_logs["game_date"] = pd.to_datetime(pitcher_logs["game_date"])
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode="confirmed_lineup"))
+
+    bullpen = builder._compute_bullpen_features(games, pitcher_logs)
+    g3_home = bullpen[(bullpen["game_id"] == "g3") & (bullpen["team"] == "HOM")].iloc[0]
+
+    assert g3_home["estimated_high_leverage_role_fatigue_score"] == pytest.approx(1.0)

@@ -10,7 +10,8 @@ import pandas as pd
 
 from mlb_winprob.constants import TARGET_COLUMN
 from mlb_winprob.data_sources import read_csv_table, write_csv_table
-from mlb_winprob.experiments import run_model_experiments
+from mlb_winprob.evaluation import model_selection_rules
+from mlb_winprob.experiments import run_expected_runs_experiments, run_model_experiments
 
 
 ROLLING_MARKERS = (
@@ -392,6 +393,7 @@ def write_season_holdout_report(
             shap_importance_tables[(season, model_name)] = shap_table
 
     all_metrics = pd.concat(metrics_frames, ignore_index=True) if metrics_frames else pd.DataFrame()
+    selection_rules = model_selection_rules(all_metrics) if not all_metrics.empty else pd.DataFrame()
     best_by_season = (
         all_metrics.sort_values(["holdout_season", "log_loss", "brier_score"])
         .groupby("holdout_season", as_index=False)
@@ -404,6 +406,7 @@ def write_season_holdout_report(
     paths = {
         "metrics": output / "metrics_by_holdout.csv",
         "best": output / "best_by_holdout.csv",
+        "model_selection_rules": output / "model_selection_rules.csv",
     }
     if plot_paths:
         paths["calibration_plots"] = calibration_dir
@@ -415,4 +418,51 @@ def write_season_holdout_report(
         write_shap_importance_summary(shap_importance_tables, shap_importance_dir / "summary.md")
     write_csv_table(all_metrics, paths["metrics"])
     write_csv_table(best_by_season, paths["best"])
+    write_csv_table(selection_rules, paths["model_selection_rules"])
+    return paths
+
+
+def write_expected_runs_holdout_report(
+    features: pd.DataFrame,
+    output_dir: str | Path,
+    *,
+    holdout_seasons: list[int],
+    model_names: list[str],
+    prediction_mode: str | None = None,
+) -> dict[str, Path]:
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+
+    metrics_frames = []
+    for season in holdout_seasons:
+        result = run_expected_runs_experiments(
+            features,
+            model_names=model_names,
+            holdout_season=season,
+            prediction_mode=prediction_mode,
+        )
+        metrics = result.metrics.copy()
+        metrics.insert(0, "holdout_season", season)
+        metrics_frames.append(metrics)
+
+    all_metrics = pd.concat(metrics_frames, ignore_index=True) if metrics_frames else pd.DataFrame()
+    best_by_season = (
+        all_metrics.sort_values(["holdout_season", "total_mae", "total_rmse"])
+        .groupby("holdout_season", as_index=False)
+        .head(1)
+        .reset_index(drop=True)
+        if not all_metrics.empty
+        else pd.DataFrame()
+    )
+    paths = {
+        "expected_runs_metrics": output / "expected_runs_metrics_by_holdout.csv",
+        "expected_runs_best": output / "expected_runs_best_by_holdout.csv",
+        "expected_runs_summary": output / "summary.md",
+    }
+    write_csv_table(all_metrics, paths["expected_runs_metrics"])
+    write_csv_table(best_by_season, paths["expected_runs_best"])
+    paths["expected_runs_summary"].write_text(
+        "\n".join(["# Expected Runs Holdout Report", "", "## Best By Holdout", "", _markdown_table(best_by_season), ""]),
+        encoding="utf-8",
+    )
     return paths

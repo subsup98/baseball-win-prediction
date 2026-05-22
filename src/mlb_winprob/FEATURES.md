@@ -40,6 +40,12 @@ game-level features
 - `sp_ip_avg_last_3_starts`
 - `sp_pitch_count_last_start`
 - `sp_rest_days`
+- `sp_whiff_rate_to_date`
+- `sp_avg_fastball_velocity_to_date`
+- `sp_avg_spin_rate_to_date`
+- `sp_fastball_usage_to_date`
+- `sp_breaking_ball_usage_to_date`
+- `sp_offspeed_usage_to_date`
 
 ### 라인업
 
@@ -55,6 +61,13 @@ game-level features
 - `lineup_platoon_woba`
 - `lineup_platoon_advantage_ratio`
 - `lineup_same_hand_ratio`
+- `lineup_confidence`
+- `lineup_available_ratio`
+- `lineup_expected_starter_ratio`
+- `lineup_rest_signal_count`
+- `lineup_injury_absence_signal_count`
+- `lineup_previous_starter_return_rate`
+- `lineup_previous_starter_missing_count`
 
 ### 팀 흐름
 
@@ -67,6 +80,16 @@ game-level features
 - `team_ops_last_14d`
 - `team_ops_last_30d`
 
+### 이동/시차
+
+- `travel_rest_days`
+- `travel_distance_miles`
+- `travel_timezone_shift`
+- `travel_is_back_to_back`
+- `travel_travel_day`
+- `travel_away_game_streak`
+- `travel_home_game_streak`
+
 ### 불펜
 
 - `bullpen_fip_season_to_date`
@@ -76,6 +99,7 @@ game-level features
 - `bullpen_ip_last_5d`
 - `closer_used_yesterday`
 - `high_leverage_rp_fatigue_score`
+- `estimated_high_leverage_role_fatigue_score`
 - `bullpen_fatigue_score`
 
 ### 구장/날씨
@@ -100,6 +124,11 @@ lineup_platoon_woba_diff = home_lineup_platoon_woba - away_lineup_platoon_woba
 lineup_platoon_advantage_diff = home_lineup_platoon_advantage_ratio - away_lineup_platoon_advantage_ratio
 bullpen_fatigue_diff = away_bullpen_fatigue_score - home_bullpen_fatigue_score
 team_woba_diff = home_team_woba_season_to_date - away_team_woba_season_to_date
+lineup_confidence_diff = home_lineup_confidence - away_lineup_confidence
+lineup_injury_absence_signal_diff = away_lineup_injury_absence_signal_count - home_lineup_injury_absence_signal_count
+travel_distance_diff = away_travel_distance_miles - home_travel_distance_miles
+travel_rest_diff = home_travel_rest_days - away_travel_rest_days
+sp_whiff_rate_diff = home_sp_whiff_rate_to_date - away_sp_whiff_rate_to_date
 ```
 
 ## 누수 방지 기준

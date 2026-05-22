@@ -164,6 +164,12 @@ statcast_batted_balls
 statcast_hard_hit_balls
 statcast_barrels
 statcast_launch_speed_sum
+statcast_whiffs
+statcast_pitches
+statcast_release_speed_sum / count
+statcast_fastball_release_speed_sum / count
+statcast_spin_rate_sum / count
+statcast_pitch_ff / si / fc / sl / cu / ch / fs
 ```
 
 ### merge-statcast-logs
@@ -193,6 +199,33 @@ sp_statcast_woba_allowed_to_date
 sp_hard_hit_rate_allowed_to_date
 sp_barrel_rate_allowed_to_date
 sp_avg_exit_velocity_allowed_to_date
+sp_whiff_rate_to_date
+sp_avg_fastball_velocity_to_date
+sp_avg_spin_rate_to_date
+sp_fastball_usage_to_date
+sp_breaking_ball_usage_to_date
+sp_offspeed_usage_to_date
+```
+
+### expected-runs-report
+
+승률 모델과 같은 leakage-safe feature table로 홈/원정 예상 득점과 total runs를 검증한다.
+
+```powershell
+mlb-winprob expected-runs-report `
+  --features data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv `
+  --output-dir outputs/experiments/expected_runs_confirmed_2021_2025 `
+  --holdout-seasons 2022,2023,2024,2025 `
+  --models ridge,random_forest_regressor `
+  --prediction-mode confirmed_lineup
+```
+
+주요 산출물:
+
+```text
+expected_runs_metrics_by_holdout.csv
+expected_runs_best_by_holdout.csv
+summary.md
 ```
 
 ### Statcast full pipeline

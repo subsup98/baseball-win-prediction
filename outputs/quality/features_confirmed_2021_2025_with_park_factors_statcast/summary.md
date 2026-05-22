@@ -1,7 +1,7 @@
 # Feature Quality Report
 
 Rows: 12148
-Columns: 121
+Columns: 176
 
 ## Seasons
 
@@ -20,15 +20,15 @@ Columns: 121
 | park_factor_hr | 0.2148501810997695 |
 | park_factor_run | 0.2148501810997695 |
 | wind_direction | 0.16965755679947317 |
+| sp_fastball_velocity_diff | 0.16916364833717484 |
 | sp_statcast_xwoba_allowed_diff | 0.16908133026012512 |
+| sp_whiff_rate_diff | 0.16908133026012512 |
 | sp_fip_diff | 0.12347711557458017 |
+| home_sp_avg_fastball_velocity_to_date | 0.10256832400395127 |
+| home_sp_avg_spin_rate_to_date | 0.10256832400395127 |
 | home_sp_avg_exit_velocity_allowed_to_date | 0.10248600592690155 |
 | home_sp_barrel_rate_allowed_to_date | 0.10248600592690155 |
-| home_sp_hard_hit_rate_allowed_to_date | 0.10248600592690155 |
-| home_sp_statcast_woba_allowed_to_date | 0.10248600592690155 |
-| home_sp_statcast_xwoba_allowed_to_date | 0.10248600592690155 |
-| away_sp_avg_exit_velocity_allowed_to_date | 0.10190977938755351 |
-| away_sp_barrel_rate_allowed_to_date | 0.10190977938755351 |
+| home_sp_breaking_ball_usage_to_date | 0.10248600592690155 |
 
 ## Rolling Feature Readiness
 

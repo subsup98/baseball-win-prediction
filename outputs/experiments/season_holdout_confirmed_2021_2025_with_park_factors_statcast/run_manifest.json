@@ -1,10 +1,10 @@
 {
-  "column_count": 121,
+  "column_count": 176,
   "config_digest": "90a15ef7e06e",
   "config_path": null,
   "feature_paths": [
     "data\\processed\\features_confirmed_2021_2025_with_park_factors_statcast.csv"
   ],
-  "generated_at": "2026-05-20T08:46:58.326472+00:00",
+  "generated_at": "2026-05-21T02:20:40.088238+00:00",
   "row_count": 12148
 }

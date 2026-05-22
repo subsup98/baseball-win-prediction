@@ -8,7 +8,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier, StackingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
@@ -87,6 +88,39 @@ def make_classifier(name: str, *, random_state: int = 42) -> Any:
                 ("model", LogisticRegression(max_iter=2000, random_state=random_state)),
             ]
         )
+    if normalized == "logistic_l1":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                (
+                    "model",
+                    LogisticRegression(
+                        C=0.5,
+                        max_iter=3000,
+                        penalty="l1",
+                        solver="liblinear",
+                        random_state=random_state,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "logistic_l2_c03":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                ("model", LogisticRegression(C=0.3, max_iter=3000, random_state=random_state)),
+            ]
+        )
+    if normalized == "logistic_l2_c3":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                ("model", LogisticRegression(C=3.0, max_iter=3000, random_state=random_state)),
+            ]
+        )
     if normalized == "random_forest":
         return Pipeline(
             [
@@ -101,6 +135,83 @@ def make_classifier(name: str, *, random_state: int = 42) -> Any:
                     ),
                 ),
             ]
+        )
+    if normalized == "random_forest_shallow":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    RandomForestClassifier(
+                        n_estimators=350,
+                        max_depth=7,
+                        min_samples_leaf=16,
+                        max_features="sqrt",
+                        random_state=random_state,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "random_forest_deep":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    RandomForestClassifier(
+                        n_estimators=500,
+                        min_samples_leaf=4,
+                        max_features="sqrt",
+                        random_state=random_state,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "extra_trees":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    ExtraTreesClassifier(
+                        n_estimators=500,
+                        min_samples_leaf=8,
+                        max_features="sqrt",
+                        random_state=random_state,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "hist_gradient_boosting":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    HistGradientBoostingClassifier(
+                        learning_rate=0.04,
+                        max_iter=250,
+                        max_leaf_nodes=15,
+                        l2_regularization=0.05,
+                        random_state=random_state,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "calibrated_logistic":
+        return CalibratedClassifierCV(
+            estimator=make_classifier("logistic_l2_c03", random_state=random_state),
+            method="isotonic",
+            cv=3,
+        )
+    if normalized == "calibrated_random_forest":
+        return CalibratedClassifierCV(
+            estimator=make_classifier("random_forest_shallow", random_state=random_state),
+            method="sigmoid",
+            cv=3,
         )
     if normalized == "mlp":
         return Pipeline(
@@ -161,20 +272,24 @@ def make_classifier(name: str, *, random_state: int = 42) -> Any:
                 ),
             ]
         )
-    if normalized == "catboost":
+    if normalized in {"catboost", "catboost_shallow", "catboost_l2", "catboost_lr02"}:
         try:
             from catboost import CatBoostClassifier
         except ImportError as exc:
             raise ModelUnavailableError("catboost is not installed. Install with .[boosters].") from exc
+        catboost_params = {
+            "catboost": {"iterations": 600, "learning_rate": 0.03, "depth": 5, "l2_leaf_reg": 3.0},
+            "catboost_shallow": {"iterations": 500, "learning_rate": 0.03, "depth": 3, "l2_leaf_reg": 6.0},
+            "catboost_l2": {"iterations": 700, "learning_rate": 0.025, "depth": 4, "l2_leaf_reg": 12.0},
+            "catboost_lr02": {"iterations": 800, "learning_rate": 0.02, "depth": 4, "l2_leaf_reg": 8.0},
+        }[normalized]
         return Pipeline(
             [
                 ("imputer", SimpleImputer(strategy="median")),
                 (
                     "model",
                     CatBoostClassifier(
-                        iterations=600,
-                        learning_rate=0.03,
-                        depth=5,
+                        **catboost_params,
                         loss_function="Logloss",
                         random_seed=random_state,
                         verbose=False,

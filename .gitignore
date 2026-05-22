@@ -1,13 +1,18 @@
 .venv/
 .pytest_cache/
+.pytest_tmp/
 __pycache__/
 *.py[cod]
 *.egg-info/
+catboost_info/
 
 data/*
 !data/processed/
 data/processed/*
 !data/processed/*.csv
+!data/smoke_pre_lineup/
+data/smoke_pre_lineup/*
+!data/smoke_pre_lineup/*.csv
 
 outputs/*
 !outputs/quality/

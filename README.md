@@ -118,6 +118,17 @@ mlb-winprob season-holdout-report `
   --config configs/season_holdout_statcast.toml
 ```
 
+예상 득점 리포트:
+
+```powershell
+mlb-winprob expected-runs-report `
+  --features data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv `
+  --output-dir outputs/experiments/expected_runs_confirmed_2021_2025 `
+  --holdout-seasons 2022,2023,2024,2025 `
+  --models ridge,random_forest_regressor `
+  --prediction-mode confirmed_lineup
+```
+
 `versioned_output = true`인 config는 `outputs/experiments/versioned/YYYYMMDD_HHMMSS_<name>_<config_hash>/` 아래에 결과를 저장하고, `run_manifest.json`과 `config_snapshot.json`을 함께 남깁니다.
 
 예측:
@@ -186,3 +197,10 @@ python -m pytest
 - [원천 데이터 수집 가이드](RAW_DATA_COLLECTION.md)
 - [변경 이력](CHANGELOG.md)
 - [소스 구조 설명](src/README.md)
+## Current Model Baseline
+
+- Main baseline: `full + random_forest`
+- Confidence-band challenger: `full + random_forest_shallow`
+- Decision log: `MODEL_IMPROVEMENT_LOG.md`
+
+Use the main baseline for overall probability quality. Use the confidence-band challenger only for selective high-confidence analysis until selection rules are validated.

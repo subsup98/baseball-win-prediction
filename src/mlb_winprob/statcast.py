@@ -59,6 +59,9 @@ def _prepare_statcast_events(events: pd.DataFrame) -> pd.DataFrame:
     out["woba_value_numeric"] = _numeric_column(out, "woba_value")
     out["xwoba_numeric"] = _numeric_column(out, "estimated_woba_using_speedangle")
     out["launch_speed_numeric"] = _numeric_column(out, "launch_speed")
+    out["release_speed_numeric"] = _numeric_column(out, "release_speed")
+    out["release_spin_rate_numeric"] = _numeric_column(out, "release_spin_rate")
+    out["pitch_type_normalized"] = _object_column(out, "pitch_type").astype(str).str.upper()
     return out
 
 
@@ -110,6 +113,15 @@ def _aggregate_player_quality(prepared: pd.DataFrame, group_columns: list[str]) 
     work["statcast_woba_sum"] = work["woba_value_numeric"].fillna(0.0)
     work["statcast_woba_count"] = work["woba_value_numeric"].notna().astype(int)
     work["statcast_launch_speed_sum"] = work["launch_speed_numeric"].where(work["is_batted_ball"], 0.0).fillna(0.0)
+    work["statcast_release_speed_sum"] = work["release_speed_numeric"].fillna(0.0)
+    work["statcast_release_speed_count"] = work["release_speed_numeric"].notna().astype(int)
+    fastball = work["pitch_type_normalized"].isin(["FF", "SI", "FC"])
+    work["statcast_fastball_release_speed_sum"] = work["release_speed_numeric"].where(fastball, 0.0).fillna(0.0)
+    work["statcast_fastball_release_speed_count"] = (work["release_speed_numeric"].notna() & fastball).astype(int)
+    work["statcast_spin_rate_sum"] = work["release_spin_rate_numeric"].fillna(0.0)
+    work["statcast_spin_rate_count"] = work["release_spin_rate_numeric"].notna().astype(int)
+    for pitch_type in ["FF", "SI", "FC", "SL", "CU", "CH", "FS"]:
+        work[f"statcast_pitch_{pitch_type.lower()}"] = work["pitch_type_normalized"].eq(pitch_type).astype(int)
     aggregate_columns = [
         "statcast_pa",
         "statcast_batted_balls",
@@ -122,6 +134,19 @@ def _aggregate_player_quality(prepared: pd.DataFrame, group_columns: list[str]) 
         "statcast_woba_sum",
         "statcast_woba_count",
         "statcast_launch_speed_sum",
+        "statcast_release_speed_sum",
+        "statcast_release_speed_count",
+        "statcast_fastball_release_speed_sum",
+        "statcast_fastball_release_speed_count",
+        "statcast_spin_rate_sum",
+        "statcast_spin_rate_count",
+        "statcast_pitch_ff",
+        "statcast_pitch_si",
+        "statcast_pitch_fc",
+        "statcast_pitch_sl",
+        "statcast_pitch_cu",
+        "statcast_pitch_ch",
+        "statcast_pitch_fs",
     ]
     return work.groupby(group_columns, as_index=False)[aggregate_columns].sum()
 

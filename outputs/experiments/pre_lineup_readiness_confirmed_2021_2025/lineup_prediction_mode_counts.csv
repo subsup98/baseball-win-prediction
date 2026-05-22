@@ -1,0 +1,6 @@
+source,rows,prediction_mode_counts
+data\standardized\mlb_stats_api_2021\lineups.csv,43722,{'confirmed_lineup': 43722}
+data\standardized\mlb_stats_api_2022\lineups.csv,43740,{'confirmed_lineup': 43740}
+data\standardized\mlb_stats_api_2023\lineups.csv,43740,{'confirmed_lineup': 43740}
+data\standardized\mlb_stats_api_2024\lineups.csv,43722,{'confirmed_lineup': 43722}
+data\standardized\mlb_stats_api_2025\lineups.csv,43740,{'confirmed_lineup': 43740}

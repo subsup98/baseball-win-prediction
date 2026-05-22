@@ -863,3 +863,538 @@ columns: 121
 
 - feature 단위 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
   - result: `34 passed`
+
+### 연구 확장 잔여 작업 정리
+
+- `PROJECT_CHECKLIST.md`에 남은 연구 확장 항목을 우선순위와 하위 작업으로 풀어 적었습니다.
+- 우선순위는 경기 전 예측 성능에 직접 붙을 가능성이 큰 순서로 정리했습니다.
+
+```text
+1. 라인업 확정 전 예상 라인업 confidence Feature
+2. 팀 이동거리와 시차 Feature
+3. 불펜 high-leverage role 자동 추정
+4. 선수 부상/휴식/결장 신호
+5. 선발투수 pitch-mix / Stuff 계열 Feature
+6. 모델 앙상블 selection rule
+7. 예상 득점 모델 확장
+8. 딥러닝용 선수 embedding 실험
+9. KBO 확장 가능 schema 점검
+```
+
+### 0.1.22 연구 확장 Feature 1-5차 구현
+
+- 연구 확장 우선순위 1~5번을 optional input 기반 feature로 구현했습니다.
+- 라인업 확정 전/예상 라인업 confidence 계열 feature를 추가했습니다.
+  - `lineup_confidence`
+  - `lineup_available_ratio`
+  - `lineup_expected_starter_ratio`
+  - `lineup_previous_starter_return_rate`
+  - `lineup_previous_starter_missing_count`
+- 선수 휴식/결장 신호 feature를 추가했습니다.
+  - `lineup_rest_signal_count`
+  - `lineup_injury_absence_signal_count`
+- venue 좌표와 timezone offset이 있을 때 팀별 이동/시차 feature를 계산하도록 추가했습니다.
+  - `travel_rest_days`
+  - `travel_distance_miles`
+  - `travel_timezone_shift`
+  - `travel_is_back_to_back`
+  - `travel_travel_day`
+  - `travel_away_game_streak`
+  - `travel_home_game_streak`
+- 불펜 high-leverage role 자동 추정 proxy를 추가했습니다.
+  - RP의 과거 `saves`, `holds`, `games_finished`, `save_opportunities`, `blown_saves`를 사용합니다.
+  - 산출 feature: `estimated_high_leverage_role_fatigue_score`
+- Statcast pitch-mix / Stuff 계열 선발투수 feature를 추가했습니다.
+  - pitch type count: `FF`, `SI`, `FC`, `SL`, `CU`, `CH`, `FS`
+  - whiff rate, fastball velocity, spin, fastball/breaking/offspeed usage
+- Diff feature도 홈팀에 유리할수록 양수인 방향으로 추가했습니다.
+  - `lineup_confidence_diff`
+  - `lineup_previous_starter_return_diff`
+  - `lineup_injury_absence_signal_diff`
+  - `travel_distance_diff`
+  - `travel_rest_diff`
+  - `travel_timezone_shift_diff`
+  - `sp_whiff_rate_diff`
+  - `sp_fastball_velocity_diff`
+- feature 단위 테스트를 확장했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `35 passed`
+- 2021 시즌 실제 표준 데이터로 feature build smoke test를 실행했습니다.
+
+```text
+outputs/features_2021_feature_expansion_check.csv
+rows: 2429
+```
+
+### 0.1.23 연구 확장 6-9차 구현
+
+- 모델 앙상블 selection rule 산출물을 추가했습니다.
+  - `season-holdout-report` 실행 시 `model_selection_rules.csv`를 저장합니다.
+  - `overall_log_loss`, `confidence_55`, `confidence_60`, `confidence_65` rule을 생성합니다.
+- 예상 득점 모델 리포트 경로를 추가했습니다.
+  - CLI: `mlb-winprob expected-runs-report`
+  - 구현: `run_expected_runs_experiments`, `write_expected_runs_holdout_report`
+  - baseline regressor: `ridge`, `random_forest_regressor`
+  - metric: `home_mae`, `away_mae`, `total_mae`, `total_rmse`, `run_diff_mae`
+- 선수 embedding 실험 설계를 문서화했습니다.
+  - `src/mlb_winprob/RESEARCH_EXTENSIONS.md`
+  - lineup sequence, pitcher/batter embedding, holdout vocabulary/UNK 처리, cold-start share 평가 기준을 정리했습니다.
+- KBO 확장 가능 schema gap을 문서화했습니다.
+  - `src/mlb_winprob/KBO_SCHEMA_GAP.md`
+  - 공통 canonical table, KBO source requirement, optional feature 처리, 최소 smoke test 기준을 정리했습니다.
+- 관련 테스트를 추가했고 `.venv` 기준 전체 테스트를 재실행했습니다.
+  - result: `37 passed`
+- 실제 Statcast 포함 2021-2025 feature로 smoke test를 실행했습니다.
+
+```text
+outputs/experiments/selection_rules_confirmed_2021_2025_feature_expansion_check/model_selection_rules.csv
+outputs/experiments/expected_runs_confirmed_2021_2025_feature_expansion_check/expected_runs_metrics_by_holdout.csv
+```
+
+### 0.1.24 최신 Feature set 재생성 및 성능 비교
+
+- 기존 Statcast 포함 confirmed lineup feature/report를 baseline으로 보존했습니다.
+
+```text
+outputs/experiments/feature_set_update_compare_20260521_095456/
+baseline_features_confirmed_2021_2025_with_park_factors_statcast.csv
+baseline_metrics_by_holdout.csv
+baseline_best_by_holdout.csv
+```
+
+- 최신 feature schema로 2021-2025 시즌 feature를 재생성했습니다.
+  - 2021-2024는 전체 pipeline 실행 중 생성 완료
+  - 2025는 타임아웃 이후 `--seasons 2025`로 이어서 생성
+  - 5개 시즌 feature를 다시 combine
+
+```text
+data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv
+rows: 12148
+columns: 173
+```
+
+- 품질 리포트와 시즌 holdout 리포트를 재생성했습니다.
+
+```text
+outputs/quality/features_confirmed_2021_2025_with_park_factors_statcast/
+outputs/experiments/season_holdout_confirmed_2021_2025_with_park_factors_statcast/
+```
+
+- baseline 대비 최신 feature set 성능 비교를 저장했습니다.
+
+```text
+outputs/experiments/feature_set_update_compare_20260521_095456/
+metric_comparison_latest_vs_baseline.csv
+metric_comparison_mean_delta.csv
+new_feature_coverage.csv
+summary.md
+```
+
+- Random Forest 기준 평균 변화는 다음과 같습니다.
+  - `log_loss_delta`: `-0.000246`
+  - `brier_score_delta`: `-0.000130`
+  - `accuracy_delta`: `+0.002572`
+- 해석:
+  - 최신 feature set은 현재 strongest model인 Random Forest에는 소폭 긍정적입니다.
+  - 다만 시즌별로 균일하지 않으므로 대폭 개선이 아니라 incremental gain으로 판단합니다.
+  - 실제로 모델에 기여한 축은 pitch-mix/Stuff, 라인업 continuity, home/away streak/rest proxy, bullpen role proxy입니다.
+  - lineup confidence/availability와 venue distance/timezone shift는 upstream source가 없어 현재 all-null입니다.
+
+### 0.1.25 all-null source 보강 및 feature group ablation
+
+- all-null이던 source-dependent feature를 보강했습니다.
+  - `venues_2021_2025.csv`를 feature build 단계에 연결했습니다.
+  - `FeatureBuilder.build(..., venues=...)`를 추가했습니다.
+  - `mlb-winprob build-features --venues ...`를 추가했습니다.
+  - `scripts/build_statcast_feature_pipeline.py --venues ...`를 추가했습니다.
+- venue source 보강 후 다음 feature의 null-rate가 해소됐습니다.
+
+```text
+home_lineup_confidence         0.000000
+away_lineup_confidence         0.000000
+home_lineup_available_ratio    0.000000
+away_lineup_available_ratio    0.000000
+home_travel_distance_miles     0.006092
+away_travel_distance_miles     0.006256
+home_travel_timezone_shift     0.006092
+away_travel_timezone_shift     0.006256
+```
+
+- confirmed lineup 기준 기본값을 적용했습니다.
+  - `lineup_confidence = 1.0`
+  - `is_available = 1.0`
+  - `is_expected_starter = 1.0`
+  - `rest_signal = 0.0`
+- venue timezone source가 없는 경우 longitude 기반 근사 offset을 적용했습니다.
+- 최신 feature set으로 2021-2025 feature와 공식 품질/holdout 리포트를 다시 갱신했습니다.
+
+```text
+data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv
+outputs/quality/features_confirmed_2021_2025_with_park_factors_statcast/
+outputs/experiments/season_holdout_confirmed_2021_2025_with_park_factors_statcast/
+```
+
+- feature group ablation 스크립트를 추가했습니다.
+
+```text
+scripts/run_feature_group_ablation.py
+outputs/experiments/feature_group_ablation_confirmed_2021_2025_with_park_factors_statcast/
+```
+
+- Random Forest 기준 ablation 평균 결과:
+
+```text
+full                         log_loss 0.679559  accuracy 0.567343
+without_pitch_stuff          log_loss 0.679942  accuracy 0.563844
+without_travel               log_loss 0.679937  accuracy 0.563433
+without_all_research_groups  log_loss 0.679770  accuracy 0.564873
+baseline_like_columns        log_loss 0.679803  accuracy 0.564976
+without_bullpen_role         log_loss 0.679424  accuracy 0.565079
+without_lineup_optional      log_loss 0.679386  accuracy 0.569092
+```
+
+- 해석:
+  - `pitch_stuff`와 `travel`은 제거하면 log loss와 accuracy가 모두 나빠져 실제로 도움이 됩니다.
+  - 전체 research feature 묶음은 baseline-like 대비 소폭 도움이 됩니다.
+  - `lineup_optional`은 confirmed lineup 기본값 위주라 현재는 노이즈에 가깝습니다.
+  - `bullpen_role`은 accuracy에는 도움되지만 log loss에는 약한 노이즈가 있어 추가 튜닝 후보입니다.
+
+### 0.1.26 Baseline 고정 및 sklearn 모델 테스트 1차
+
+- confirmed lineup 최신 feature set 기준 baseline 실험을 고정했습니다.
+
+```text
+outputs/experiments/model_baseline_confirmed_2021_2025_with_park_factors_statcast/
+models: elo, logistic, random_forest
+```
+
+- baseline 평균 성능:
+
+```text
+random_forest  log_loss 0.679559  accuracy 0.567343  accuracy_conf_60 0.650573  coverage_conf_60 0.186231
+logistic       log_loss 0.689587  accuracy 0.564872  accuracy_conf_60 0.604787  coverage_conf_60 0.421125
+elo            log_loss 0.692476  accuracy 0.559521  accuracy_conf_60 0.591693  coverage_conf_60 0.527727
+```
+
+- sklearn 기반 모델 테스트 후보를 추가했습니다.
+  - `logistic_l1`
+  - `logistic_l2_c03`
+  - `logistic_l2_c3`
+  - `random_forest_shallow`
+  - `random_forest_deep`
+  - `extra_trees`
+  - `hist_gradient_boosting`
+  - `calibrated_logistic`
+  - `calibrated_random_forest`
+- 빠른 metric-only 모델 테스트 스크립트를 추가했습니다.
+
+```text
+scripts/run_model_test_experiment.py
+outputs/experiments/model_test_confirmed_2021_2025_with_park_factors_statcast/
+```
+
+- 1차 모델 테스트 평균 결과:
+
+```text
+random_forest              log_loss 0.679559  accuracy 0.567343  accuracy_conf_60 0.650573
+random_forest_shallow      log_loss 0.680300  accuracy 0.565285  accuracy_conf_60 0.672257
+random_forest_deep         log_loss 0.680681  accuracy 0.565902  accuracy_conf_60 0.647200
+extra_trees                log_loss 0.681978  accuracy 0.559008  accuracy_conf_60 0.678075
+calibrated_logistic        log_loss 0.683131  accuracy 0.561066  accuracy_conf_60 0.615442
+logistic_l1                log_loss 0.686193  accuracy 0.564666  accuracy_conf_60 0.613934
+logistic_l2_c03            log_loss 0.688679  accuracy 0.564357  accuracy_conf_60 0.606529
+logistic                   log_loss 0.689587  accuracy 0.564872  accuracy_conf_60 0.604787
+logistic_l2_c3             log_loss 0.690143  accuracy 0.564872  accuracy_conf_60 0.604847
+hist_gradient_boosting     log_loss 0.692632  accuracy 0.551806  accuracy_conf_60 0.599648
+```
+
+- 해석:
+  - 전체 평균 log loss 기준 메인 baseline은 여전히 `random_forest`입니다.
+  - `random_forest_shallow`는 전체 log loss는 밀리지만 confidence 60%+ 구간 accuracy가 가장 좋아 선별 모델 후보입니다.
+  - `calibrated_logistic`은 plain logistic보다 log loss가 좋아졌지만 RF를 넘지는 못했습니다.
+  - `hist_gradient_boosting`은 현재 sklearn-only 설정에서는 부적합합니다.
+  - 다음 실험은 `random_forest` 메인 + `random_forest_shallow` confidence-band challenger + feature pruning 조합으로 좁히는 것이 좋습니다.
+
+### 0.1.27 RF 계열 feature pruning / calibration 실험
+
+- pruning feature set을 생성했습니다.
+
+```text
+data/processed/model_experiments/features_confirmed_2021_2025_with_park_factors_statcast_without_lineup_optional.csv
+data/processed/model_experiments/features_confirmed_2021_2025_with_park_factors_statcast_without_lineup_optional_bullpen_role.csv
+```
+
+- 비교 모델:
+  - `random_forest`
+  - `random_forest_shallow`
+  - `calibrated_random_forest`
+- 비교 산출물:
+
+```text
+outputs/experiments/model_test_rf_family_full_confirmed_2021_2025/
+outputs/experiments/model_test_rf_family_without_lineup_optional_confirmed_2021_2025/
+outputs/experiments/model_test_rf_family_without_lineup_optional_bullpen_role_confirmed_2021_2025/
+outputs/experiments/model_test_rf_family_comparison_confirmed_2021_2025/
+```
+
+- 평균 log loss 기준 top 결과:
+
+```text
+without_lineup_optional              random_forest              log_loss 0.679386  accuracy 0.569092  acc_conf_60 0.647983  cov_conf_60 0.191376
+full                                 random_forest              log_loss 0.679559  accuracy 0.567343  acc_conf_60 0.650573  cov_conf_60 0.186231
+without_lineup_optional_bullpen_role random_forest              log_loss 0.679819  accuracy 0.561890  acc_conf_60 0.655906  cov_conf_60 0.187980
+full                                 calibrated_random_forest   log_loss 0.679895  accuracy 0.563947  acc_conf_60 0.638381  cov_conf_60 0.186131
+```
+
+- 해석:
+  - 새 main baseline 후보는 `without_lineup_optional + random_forest`입니다.
+  - 기존 full feature `random_forest` 대비 평균 log loss와 accuracy가 모두 소폭 개선됐습니다.
+  - `calibrated_random_forest`는 현재 설정에서는 RF를 넘지 못했습니다.
+  - `random_forest_shallow`는 전체 log loss는 밀리지만 `accuracy_conf_60`이 약 `0.682`로 가장 높아 confidence-band 전용 후보입니다.
+  - `bullpen_role`까지 제거하면 confidence-band accuracy는 올라가지만 전체 accuracy/log_loss가 나빠져 메인 baseline에서는 유지하지 않는 편이 낫습니다.
+
+### 0.1.28 Multi-seed baseline 안정성 검증
+
+- 단일 seed 결과의 안정성을 확인하기 위해 10개 seed 반복 검증을 실행했습니다.
+
+```text
+seeds: 11,22,33,44,55,66,77,88,99,111
+holdout seasons: 2022,2023,2024,2025
+variants: full, without_lineup_optional
+models: random_forest, random_forest_shallow
+baseline: full + random_forest
+```
+
+- 산출물:
+
+```text
+outputs/experiments/model_multiseed_rf_pruning_confirmed_2021_2025/
+metrics_by_seed_holdout.csv
+summary_by_variant_model.csv
+stability_vs_baseline.csv
+summary.md
+```
+
+- 10개 seed 평균 결과:
+
+```text
+full                    random_forest          log_loss 0.679496  accuracy 0.565069  acc_conf_60 0.657115  cov_conf_60 0.185079
+without_lineup_optional random_forest          log_loss 0.679896  accuracy 0.565100  acc_conf_60 0.652715  cov_conf_60 0.188207
+full                    random_forest_shallow  log_loss 0.680243  accuracy 0.567127  acc_conf_60 0.678148  cov_conf_60 0.127459
+without_lineup_optional random_forest_shallow  log_loss 0.680310  accuracy 0.566623  acc_conf_60 0.673279  cov_conf_60 0.128241
+```
+
+- baseline 대비 안정성:
+
+```text
+without_lineup_optional + random_forest
+  mean_log_loss_delta_vs_baseline: +0.000400
+  log_loss_win_rate_vs_baseline: 0.35
+
+full + random_forest_shallow
+  mean_log_loss_delta_vs_baseline: +0.000746
+  accuracy_delta_vs_baseline: +0.002058
+  accuracy_win_rate_vs_baseline: 0.625
+```
+
+- 최종 판단:
+  - 단일 seed에서 좋아 보였던 `without_lineup_optional + random_forest`는 반복 검증에서 안정적으로 이기지 못했습니다.
+  - 메인 baseline은 `full + random_forest`로 확정합니다.
+  - `full + random_forest_shallow`는 전체 log loss는 밀리지만 confidence-band accuracy가 좋아 선별 모델 후보로 유지합니다.
+  - feature pruning은 현재 단계에서 baseline 교체 근거가 부족합니다.
+
+### 0.1.29 Baseline decision log and next validation sweep
+
+- 모델 개선/평가 의사결정을 누적 기록하기 위해 `MODEL_IMPROVEMENT_LOG.md`를 추가했습니다.
+- 현재 baseline 결정을 문서화했습니다.
+  - main baseline: `full + random_forest`
+  - confidence-band challenger: `full + random_forest_shallow`
+  - calibration challenger: `calibrated_logistic`
+  - watchlist: `without_bullpen_role + random_forest`
+- `README.md`, `src/mlb_winprob/MODELS_AND_EXPERIMENTS.md`에 현재 baseline 요약을 추가했습니다.
+
+Bullpen role stability:
+
+```text
+output: outputs/experiments/model_multiseed_rf_bullpen_role_confirmed_2021_2025/
+baseline: full + random_forest
+candidate: without_bullpen_role + random_forest
+seeds: 11,22,33,44,55,66,77,88,99,111
+
+without_bullpen_role + random_forest
+  mean_log_loss: 0.679389
+  mean_accuracy: 0.565974
+  log_loss_delta_vs_baseline: -0.000107
+  accuracy_delta_vs_baseline: +0.000906
+  log_loss_win_rate_vs_baseline: 0.55
+```
+
+- 판단:
+  - `without_bullpen_role + random_forest`는 평균 지표가 소폭 좋아졌지만 win rate가 55%라 baseline 교체 근거로는 약합니다.
+  - watchlist/challenger로 유지하고, high-leverage role proxy 계산식을 더 다듬은 뒤 재검증합니다.
+
+Confidence-band rule check:
+
+```text
+output: outputs/experiments/confidence_band_selection_rules_confirmed_2021_2025/
+
+full + random_forest_shallow vs full + random_forest
+  log_loss_delta: +0.000746
+  accuracy_delta: +0.002058
+  accuracy_conf_60_delta: +0.021033
+  coverage_conf_60_delta: -0.057620
+```
+
+- 판단:
+  - `random_forest_shallow`는 `accuracy_conf_60`은 좋지만 coverage가 줄고 전체 log loss가 나빠집니다.
+  - 기본 확률 모델은 `full + random_forest`를 유지합니다.
+  - `random_forest_shallow`는 고확신 구간 분석용 challenger로만 유지합니다.
+
+Pre-lineup readiness:
+
+```text
+output: outputs/experiments/pre_lineup_readiness_confirmed_2021_2025/
+```
+
+- 현재 2021-2025 feature table과 standardized `lineups.csv`는 모두 `confirmed_lineup`입니다.
+- `pre_lineup`, `projected`, `expected` lineup row가 없어 실제 경기 전 예측 성능 평가는 blocked 상태입니다.
+- 현재 confirmed-lineup 성능을 pre-game deployable 성능으로 해석하지 않습니다.
+
+Expected runs:
+
+```text
+output: outputs/experiments/expected_runs_confirmed_2021_2025_full_check/
+
+best by holdout:
+2022 random_forest_regressor total_mae 3.507164 total_rmse 4.411268 run_diff_mae 3.373167
+2023 ridge                   total_mae 3.570532 total_rmse 4.546192 run_diff_mae 3.472396
+2024 random_forest_regressor total_mae 3.328263 total_rmse 4.198817 run_diff_mae 3.412222
+2025 ridge                   total_mae 3.533861 total_rmse 4.490473 run_diff_mae 3.529009
+```
+
+- 판단:
+  - expected-runs는 별도 리포트로 유효하지만 시즌별 best regressor가 바뀝니다.
+  - 승률 모델 feature로 붙이려면 out-of-fold/holdout-safe expected-run prediction feature를 먼저 생성해야 합니다.
+
+Booster comparison:
+
+```text
+output: outputs/experiments/model_test_boosters_confirmed_2021_2025_with_park_factors_statcast/
+
+random_forest mean_log_loss 0.679559 mean_accuracy 0.567343
+catboost      mean_log_loss 0.683661 mean_accuracy 0.563123
+xgboost       mean_log_loss 0.693865 mean_accuracy 0.562507
+lightgbm      mean_log_loss 0.720479 mean_accuracy 0.552834
+```
+
+- optional booster dependency를 설치해 LightGBM/XGBoost/CatBoost를 비교했습니다.
+- 판단:
+  - 현재 기본 설정에서는 어떤 booster도 `full + random_forest`를 대체하지 못합니다.
+  - CatBoost만 추후 targeted tuning/calibration 후보로 남깁니다.
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe -m pytest --basetemp .pytest_tmp
+38 passed
+```
+
+- 기본 temp 경로에서는 pytest numbered temp directory 생성 문제로 실패했지만, workspace 내부 `--basetemp` 지정 후 전체 테스트가 통과했습니다.
+
+다음 작업 후보:
+
+1. `pre_lineup` source 확보: projected/expected lineup source 후보를 정하고 표준 `lineups.csv`에 `pre_lineup` row를 만들 수 있는지 검증합니다.
+2. Expected-runs OOF feature 실험: season holdout에서 누수 없는 expected home/away/total/run_diff prediction feature를 만들고 win-probability baseline 대비 성능 변화를 확인합니다.
+3. Bullpen role proxy 개선: save/hold/games finished/save opportunity 기반 high-leverage role score를 재조정하고 `without_bullpen_role` watchlist를 재검증합니다.
+4. CatBoost targeted tuning: 기본 CatBoost가 RF보다 약하므로, depth/l2/learning-rate/calibration 후보를 좁혀 별도 튜닝 실험으로만 진행합니다.
+5. Feature stability/SHAP 정리: 시즌별 feature importance와 SHAP top feature 안정성을 비교해 pruning 후보와 유지 후보를 분리합니다.
+### 0.1.30 Pre-lineup guard, OOF expected-runs, bullpen cap, CatBoost tuning
+
+- Updated the model experiment record and checklist from the recommended work order.
+- Main model decision is unchanged:
+  - main baseline: `full + random_forest`
+  - confidence challenger: `full + random_forest_shallow`
+  - calibration challenger: `calibrated_logistic`
+  - watchlist: `without_bullpen_role + random_forest`
+
+Pre-lineup guard and smoke build:
+
+```text
+data/smoke_pre_lineup/lineups_projected_2024-04-01.csv
+data/smoke_pre_lineup/features_pre_lineup_2024-04-01.csv
+```
+
+- Added a strict `prediction_mode` filter for lineup features.
+- `pre_lineup` mode now accepts projected/expected aliases and does not fall back to confirmed rows.
+- Smoke pre-lineup feature build produced 14 games with 9 projected players per side.
+
+Expected-runs OOF feature experiment:
+
+```text
+outputs/experiments/expected_runs_oof_feature_confirmed_2021_2025/
+outputs/experiments/expected_runs_oof_feature_rf_regressor_confirmed_2021_2025/
+```
+
+- Added holdout-safe expected run prediction features:
+  - `expected_home_runs`
+  - `expected_away_runs`
+  - `expected_total_runs`
+  - `expected_run_diff`
+- Result: do not add expected-runs prediction columns to the current win-probability baseline yet.
+- Keep expected-runs as an adjacent report until a stronger OOF signal appears.
+
+Bullpen role proxy cap:
+
+```text
+outputs/experiments/model_multiseed_rf_bullpen_role_capped_confirmed_2021_2025/
+```
+
+- Capped `estimated_high_leverage_role_score` at `1.0` before fatigue aggregation.
+- Multi-seed decision did not change at decision precision.
+- Keep the cap as a safety guard, but keep `without_bullpen_role + random_forest` as watchlist only.
+
+CatBoost targeted tuning:
+
+```text
+outputs/experiments/model_test_catboost_tuning_confirmed_2021_2025_with_park_factors_statcast/
+```
+
+- Added CatBoost candidates:
+  - `catboost_shallow`
+  - `catboost_l2`
+  - `catboost_lr02`
+- Best average model remains `random_forest`.
+- CatBoost showed some season-specific wins, so it remains a season-dependent challenger rather than the baseline.
+
+Feature stability summary:
+
+```text
+outputs/experiments/feature_stability_confirmed_2021_2025/
+```
+
+- Added a feature stability summary across holdout seasons.
+- Stable groups are useful for the next grouped ablation pass.
+- Do not prune one-off features from importance alone.
+
+Docs and tests:
+
+- Updated:
+  - `MODEL_IMPROVEMENT_LOG.md`
+  - `PROJECT_CHECKLIST.md`
+  - `EXPERIMENT_RUNBOOK.md`
+  - `PRE_LINEUP_SOURCE_PLAN.md`
+  - `README.md`
+  - `src/mlb_winprob/MODELS_AND_EXPERIMENTS.md`
+- Added/updated tests for:
+  - pre-lineup mode isolation
+  - projected lineup alias handling
+  - bullpen role score cap
+  - expected-runs OOF feature safety
+  - optional CatBoost candidate registry
+
+Next work queue:
+
+1. Build the actual projected/expected lineup source collector and normalizer.
+2. Run a real source-backed pre-lineup smoke test.
+3. Evaluate CatBoost season-dependent selection rules with multi-seed validation.
+4. Run grouped ablation using stable feature groups.
+5. Clean up Windows subprocess encoding warnings.

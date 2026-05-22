@@ -114,6 +114,11 @@ season,column,rows,null_rate_all,null_rate_may_onward,non_null_may_onward
 2023,away_closer_used_yesterday,2430,0.0,0.0,2005
 2024,away_closer_used_yesterday,2429,0.0,0.0,1984
 2025,away_closer_used_yesterday,2430,0.0,0.0,1973
+2021,away_estimated_high_leverage_role_fatigue_score,2429,0.0,0.0,2055
+2022,away_estimated_high_leverage_role_fatigue_score,2430,0.0,0.0,2115
+2023,away_estimated_high_leverage_role_fatigue_score,2430,0.0,0.0,2005
+2024,away_estimated_high_leverage_role_fatigue_score,2429,0.0,0.0,1984
+2025,away_estimated_high_leverage_role_fatigue_score,2430,0.0,0.0,1973
 2021,away_high_leverage_rp_fatigue_score,2429,0.0,0.0,2055
 2022,away_high_leverage_rp_fatigue_score,2430,0.0,0.0,2115
 2023,away_high_leverage_rp_fatigue_score,2430,0.0,0.0,2005
@@ -149,6 +154,11 @@ season,column,rows,null_rate_all,null_rate_may_onward,non_null_may_onward
 2023,away_team_woba_season_to_date,2430,0.006172839506172839,0.0,2005
 2024,away_team_woba_season_to_date,2429,0.006587072869493619,0.0,1984
 2025,away_team_woba_season_to_date,2430,0.006172839506172839,0.0,1973
+2021,away_travel_rest_days,2429,0.006175380815150268,0.0,2055
+2022,away_travel_rest_days,2430,0.006172839506172839,0.0,2115
+2023,away_travel_rest_days,2430,0.006172839506172839,0.0,2005
+2024,away_travel_rest_days,2429,0.006587072869493619,0.0,1984
+2025,away_travel_rest_days,2430,0.006172839506172839,0.0,1973
 2021,bullpen_fatigue_diff,2429,0.0,0.0,2055
 2022,bullpen_fatigue_diff,2430,0.0,0.0,2115
 2023,bullpen_fatigue_diff,2430,0.0,0.0,2005
@@ -189,6 +199,11 @@ season,column,rows,null_rate_all,null_rate_may_onward,non_null_may_onward
 2023,home_closer_used_yesterday,2430,0.0,0.0,2005
 2024,home_closer_used_yesterday,2429,0.0,0.0,1984
 2025,home_closer_used_yesterday,2430,0.0,0.0,1973
+2021,home_estimated_high_leverage_role_fatigue_score,2429,0.0,0.0,2055
+2022,home_estimated_high_leverage_role_fatigue_score,2430,0.0,0.0,2115
+2023,home_estimated_high_leverage_role_fatigue_score,2430,0.0,0.0,2005
+2024,home_estimated_high_leverage_role_fatigue_score,2429,0.0,0.0,1984
+2025,home_estimated_high_leverage_role_fatigue_score,2430,0.0,0.0,1973
 2021,home_high_leverage_rp_fatigue_score,2429,0.0,0.0,2055
 2022,home_high_leverage_rp_fatigue_score,2430,0.0,0.0,2115
 2023,home_high_leverage_rp_fatigue_score,2430,0.0,0.0,2005
@@ -224,3 +239,8 @@ season,column,rows,null_rate_all,null_rate_may_onward,non_null_may_onward
 2023,home_team_woba_season_to_date,2430,0.006172839506172839,0.0,2005
 2024,home_team_woba_season_to_date,2429,0.005763688760806916,0.0,1984
 2025,home_team_woba_season_to_date,2430,0.006172839506172839,0.0,1973
+2021,home_travel_rest_days,2429,0.006175380815150268,0.0,2055
+2022,home_travel_rest_days,2430,0.006172839506172839,0.0,2115
+2023,home_travel_rest_days,2430,0.006172839506172839,0.0,2005
+2024,home_travel_rest_days,2429,0.005763688760806916,0.0,1984
+2025,home_travel_rest_days,2430,0.006172839506172839,0.0,1973

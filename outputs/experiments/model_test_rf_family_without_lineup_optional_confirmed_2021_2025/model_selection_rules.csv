@@ -1,0 +1,13 @@
+holdout_season,rule_name,selected_model,selection_metric,selection_value,coverage
+2022,overall_log_loss,random_forest,log_loss,0.676853952411767,1.0
+2022,confidence_55,calibrated_random_forest,accuracy_conf_55,0.6228893058161351,0.43868312757201644
+2022,confidence_60,random_forest_shallow,accuracy_conf_60,0.6740947075208914,0.14773662551440328
+2023,overall_log_loss,calibrated_random_forest,log_loss,0.6804018489548933,1.0
+2023,confidence_55,random_forest_shallow,accuracy_conf_55,0.602928509905254,0.4777777777777778
+2023,confidence_60,random_forest_shallow,accuracy_conf_60,0.6666666666666666,0.14320987654320988
+2024,overall_log_loss,calibrated_random_forest,log_loss,0.6788891545904866,1.0
+2024,confidence_55,random_forest,accuracy_conf_55,0.6141396933560477,0.48332647179909427
+2024,confidence_60,random_forest_shallow,accuracy_conf_60,0.6829268292682927,0.10127624536846438
+2025,overall_log_loss,random_forest,log_loss,0.6800010234236089,1.0
+2025,confidence_55,random_forest,accuracy_conf_55,0.6023102310231023,0.49876543209876545
+2025,confidence_60,random_forest_shallow,accuracy_conf_60,0.7044673539518901,0.11975308641975309

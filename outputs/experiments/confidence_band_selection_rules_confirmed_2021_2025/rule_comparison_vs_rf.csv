@@ -1,0 +1,3 @@
+rule,model,log_loss_delta_vs_rf,accuracy_delta_vs_rf,accuracy_conf_60_delta_vs_rf,coverage_conf_60_delta_vs_rf,read
+always_random_forest,random_forest,0.0,0.0,0.0,0.0,main baseline
+always_random_forest_shallow,random_forest_shallow,0.0007463401735655628,0.0020582230828789516,0.02103265052911185,-0.05762004296506379,confidence challenger

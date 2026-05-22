@@ -1,5 +1,14 @@
 # Models And Experiments
 
+## Current Baseline Decision
+
+- Main baseline: `full + random_forest`
+- Confidence-band challenger: `full + random_forest_shallow`
+- Calibration challenger: `calibrated_logistic`
+- Held pruning candidate: `without_lineup_optional + random_forest`
+
+The main baseline is fixed to `full + random_forest` because the 10-seed stability check had the best mean log loss among the current RF candidates. `full + random_forest_shallow` remains a selective confidence-band challenger because it improves `accuracy_conf_60` while giving up overall log loss and coverage. Feature-pruned candidates should not replace the baseline unless they beat it in multi-seed season-holdout validation.
+
 구현 파일: `models.py`, `experiments.py`, `prediction.py`
 
 ## 모델 실험 구조
@@ -86,6 +95,48 @@ versioned_output = true
 ```
 
 `versioned_output = true`이면 결과는 `YYYYMMDD_HHMMSS_<name>_<config_hash>` 디렉터리에 저장됩니다. 모든 holdout report 실행은 `run_manifest.json`을 남기고, config 기반 실행은 `config_snapshot.json`도 함께 저장합니다.
+
+## 앙상블 selection rule
+
+`season-holdout-report`는 모델별 원시 metric 외에 `model_selection_rules.csv`를 저장합니다.
+
+- `overall_log_loss`: holdout log loss가 가장 낮은 모델
+- `confidence_55`, `confidence_60`, `confidence_65`: 해당 confidence band에서 coverage가 10% 이상인 모델 중 accuracy가 가장 높은 모델
+
+이 rule은 production 후보를 고정하기 위한 1차 기준입니다. 시즌별 best model이 흔들리는지, confidence band별 선택이 calibration을 해치지 않는지 별도로 확인해야 합니다.
+
+## 예상 득점 모델
+
+`expected-runs-report`는 같은 feature table로 홈/원정 득점을 따로 예측합니다.
+
+지원 regressor:
+
+- `ridge`
+- `random_forest_regressor`
+
+```powershell
+mlb-winprob expected-runs-report `
+  --features data/processed/features_confirmed_2021_2025_with_park_factors_statcast.csv `
+  --output-dir outputs/experiments/expected_runs_confirmed_2021_2025 `
+  --holdout-seasons 2022,2023,2024,2025 `
+  --models ridge,random_forest_regressor `
+  --prediction-mode confirmed_lineup
+```
+
+출력 metric:
+
+- `home_mae`
+- `away_mae`
+- `total_mae`
+- `total_rmse`
+- `run_diff_mae`
+
+예상 득점은 승률 모델의 대체물이 아니라 adjacent task입니다. total runs와 run differential이 안정적으로 맞는지 확인한 뒤 승률 모델의 보조 출력으로 연결합니다.
+
+## 연구 확장 설계 문서
+
+- 선수 embedding 실험 설계: `RESEARCH_EXTENSIONS.md`
+- KBO schema gap 점검: `KBO_SCHEMA_GAP.md`
 
 ## 예측 응답
 

@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from mlb_winprob.constants import NON_FEATURE_COLUMNS, TARGET_COLUMN
 from mlb_winprob.evaluation import calibration_table, evaluate_probabilities, season_holdout_split
@@ -24,6 +31,13 @@ class ExperimentResult:
         if self.metrics.empty:
             raise ValueError("No successful model runs.")
         return str(self.metrics.sort_values(["log_loss", "brier_score"]).iloc[0]["model_name"])
+
+
+@dataclass
+class ExpectedRunsResult:
+    metrics: pd.DataFrame
+    fitted_models: dict[str, Any]
+    feature_columns: list[str]
 
 
 def select_feature_columns(features: pd.DataFrame) -> list[str]:
@@ -91,3 +105,145 @@ def run_model_experiments(
         fitted_models=fitted_models,
         feature_columns=feature_columns,
     )
+
+
+def make_regressor(name: str, *, random_state: int = 42) -> Any:
+    normalized = name.lower()
+    if normalized == "ridge":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                ("model", Ridge(alpha=1.0, random_state=random_state)),
+            ]
+        )
+    if normalized == "random_forest_regressor":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    RandomForestRegressor(
+                        n_estimators=300,
+                        min_samples_leaf=8,
+                        random_state=random_state,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        )
+    raise ValueError(f"Unknown regressor name: {name}")
+
+
+def run_expected_runs_experiments(
+    features: pd.DataFrame,
+    *,
+    model_names: list[str] | None = None,
+    holdout_season: int | None = None,
+    prediction_mode: str | None = None,
+    random_state: int = 42,
+) -> ExpectedRunsResult:
+    frame = features.copy()
+    if prediction_mode is not None and "prediction_mode" in frame.columns:
+        frame = frame[frame["prediction_mode"] == prediction_mode].copy()
+    for target in ["home_score", "away_score"]:
+        if target not in frame.columns:
+            raise ValueError(f"features must include {target}")
+
+    train, test = season_holdout_split(frame, holdout_season=holdout_season)
+    feature_columns = select_feature_columns(train)
+    feature_columns = [column for column in feature_columns if column not in {"home_score", "away_score"}]
+    if not feature_columns:
+        raise ValueError("No numeric feature columns found.")
+
+    rows: list[dict[str, float | str]] = []
+    fitted_models: dict[str, Any] = {}
+    x_train = train[feature_columns]
+    x_test = test[feature_columns]
+    y_home = test["home_score"].astype(float)
+    y_away = test["away_score"].astype(float)
+
+    for model_name in model_names or ["ridge", "random_forest_regressor"]:
+        home_model = make_regressor(model_name, random_state=random_state)
+        away_model = make_regressor(model_name, random_state=random_state + 1)
+        home_model.fit(x_train, train["home_score"].astype(float))
+        away_model.fit(x_train, train["away_score"].astype(float))
+        pred_home = np.clip(home_model.predict(x_test), 0, None)
+        pred_away = np.clip(away_model.predict(x_test), 0, None)
+        pred_total = pred_home + pred_away
+        actual_total = y_home.to_numpy(dtype=float) + y_away.to_numpy(dtype=float)
+        rows.append(
+            {
+                "model_name": model_name,
+                "home_mae": float(mean_absolute_error(y_home, pred_home)),
+                "away_mae": float(mean_absolute_error(y_away, pred_away)),
+                "total_mae": float(mean_absolute_error(actual_total, pred_total)),
+                "total_rmse": float(mean_squared_error(actual_total, pred_total) ** 0.5),
+                "run_diff_mae": float(mean_absolute_error(y_home - y_away, pred_home - pred_away)),
+                "n_games": float(len(test)),
+            }
+        )
+        fitted_models[f"{model_name}_home"] = home_model
+        fitted_models[f"{model_name}_away"] = away_model
+
+    return ExpectedRunsResult(
+        metrics=pd.DataFrame(rows).sort_values(["total_mae", "total_rmse"]).reset_index(drop=True),
+        fitted_models=fitted_models,
+        feature_columns=feature_columns,
+    )
+
+
+def add_expected_runs_prediction_features(
+    features: pd.DataFrame,
+    *,
+    holdout_seasons: list[int],
+    model_name: str = "ridge",
+    prediction_mode: str | None = None,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Add holdout-safe expected-run predictions for each requested season.
+
+    Each holdout season is predicted by regressors trained only on earlier
+    seasons, matching the season-holdout evaluation contract.
+    """
+
+    frame = features.copy()
+    if prediction_mode is not None and "prediction_mode" in frame.columns:
+        mode_mask = frame["prediction_mode"] == prediction_mode
+    else:
+        mode_mask = pd.Series(True, index=frame.index)
+    for target in ["home_score", "away_score", "season"]:
+        if target not in frame.columns:
+            raise ValueError(f"features must include {target}")
+
+    output_columns = [
+        "expected_home_runs",
+        "expected_away_runs",
+        "expected_total_runs",
+        "expected_run_diff",
+    ]
+    for column in output_columns:
+        frame[column] = np.nan
+
+    for season in holdout_seasons:
+        train = frame[mode_mask & (frame["season"] < season)].copy()
+        test = frame[mode_mask & (frame["season"] == season)].copy()
+        if train.empty or test.empty:
+            continue
+        feature_columns = select_feature_columns(train)
+        feature_columns = [column for column in feature_columns if column not in {"home_score", "away_score", *output_columns}]
+        if not feature_columns:
+            continue
+
+        home_model = make_regressor(model_name, random_state=random_state)
+        away_model = make_regressor(model_name, random_state=random_state + 1)
+        home_model.fit(train[feature_columns], train["home_score"].astype(float))
+        away_model.fit(train[feature_columns], train["away_score"].astype(float))
+        pred_home = np.clip(home_model.predict(test[feature_columns]), 0, None)
+        pred_away = np.clip(away_model.predict(test[feature_columns]), 0, None)
+        frame.loc[test.index, "expected_home_runs"] = pred_home
+        frame.loc[test.index, "expected_away_runs"] = pred_away
+        frame.loc[test.index, "expected_total_runs"] = pred_home + pred_away
+        frame.loc[test.index, "expected_run_diff"] = pred_home - pred_away
+
+    return frame

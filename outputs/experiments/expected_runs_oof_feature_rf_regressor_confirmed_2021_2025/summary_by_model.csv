@@ -1,0 +1,2 @@
+model_name,mean_log_loss_delta_vs_baseline,mean_brier_score_delta_vs_baseline,mean_accuracy_delta_vs_baseline,mean_accuracy_conf_60_delta_vs_baseline,mean_coverage_conf_60_delta_vs_baseline
+random_forest,7.396065046011424e-05,3.9591041936758165e-05,-0.0038069655584865303,-0.003979682697367537,0.01903580196087401

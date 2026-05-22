@@ -61,6 +61,65 @@ def calibration_table(
     return table
 
 
+def model_selection_rules(
+    metrics: pd.DataFrame,
+    *,
+    confidence_thresholds: tuple[float, ...] = CONFIDENCE_THRESHOLDS,
+    min_coverage: float = 0.10,
+) -> pd.DataFrame:
+    """Choose simple per-holdout model rules from existing metrics.
+
+    The output is intentionally rule-based and auditable: one overall log-loss
+    winner plus optional confidence-band winners when coverage is high enough.
+    """
+
+    if metrics.empty:
+        return pd.DataFrame()
+    required = {"holdout_season", "model_name", "log_loss", "brier_score"}
+    missing = required - set(metrics.columns)
+    if missing:
+        raise ValueError(f"metrics is missing required columns: {sorted(missing)}")
+
+    rows: list[dict[str, object]] = []
+    for season, group in metrics.groupby("holdout_season", sort=True):
+        overall = group.sort_values(["log_loss", "brier_score", "model_name"]).iloc[0]
+        rows.append(
+            {
+                "holdout_season": season,
+                "rule_name": "overall_log_loss",
+                "selected_model": overall["model_name"],
+                "selection_metric": "log_loss",
+                "selection_value": float(overall["log_loss"]),
+                "coverage": 1.0,
+            }
+        )
+        for threshold in confidence_thresholds:
+            suffix = int(threshold * 100)
+            accuracy_column = f"accuracy_conf_{suffix}"
+            coverage_column = f"coverage_conf_{suffix}"
+            if accuracy_column not in group.columns or coverage_column not in group.columns:
+                continue
+            eligible = group[group[coverage_column].fillna(0) >= min_coverage].copy()
+            eligible = eligible.dropna(subset=[accuracy_column])
+            if eligible.empty:
+                continue
+            selected = eligible.sort_values(
+                [accuracy_column, coverage_column, "log_loss", "model_name"],
+                ascending=[False, False, True, True],
+            ).iloc[0]
+            rows.append(
+                {
+                    "holdout_season": season,
+                    "rule_name": f"confidence_{suffix}",
+                    "selected_model": selected["model_name"],
+                    "selection_metric": accuracy_column,
+                    "selection_value": float(selected[accuracy_column]),
+                    "coverage": float(selected[coverage_column]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def temporal_train_test_split(
     features: pd.DataFrame,
     *,
