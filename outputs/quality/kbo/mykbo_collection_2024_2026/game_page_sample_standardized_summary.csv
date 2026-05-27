@@ -1,0 +1,4 @@
+table,rows,columns,path
+batting_logs,159,23,data\standardized\kbo\game_pages_sample_standardized\batting_logs.csv
+lineups,90,11,data\standardized\kbo\game_pages_sample_standardized\lineups.csv
+pitcher_logs,62,20,data\standardized\kbo\game_pages_sample_standardized\pitcher_logs.csv

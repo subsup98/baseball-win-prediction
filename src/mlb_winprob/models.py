@@ -9,7 +9,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier, StackingClassifier
+from sklearn.ensemble import (
+    ExtraTreesClassifier,
+    HistGradientBoostingClassifier,
+    RandomForestClassifier,
+    StackingClassifier,
+    VotingClassifier,
+)
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
@@ -309,6 +315,35 @@ def make_classifier(name: str, *, random_state: int = 42) -> Any:
             stack_method="predict_proba",
             n_jobs=-1,
         )
+    if normalized == "soft_voting":
+        base_estimators = [
+            ("logistic", make_classifier("logistic", random_state=random_state)),
+            ("random_forest", make_classifier("random_forest", random_state=random_state)),
+            ("random_forest_shallow", make_classifier("random_forest_shallow", random_state=random_state)),
+            ("extra_trees", make_classifier("extra_trees", random_state=random_state)),
+        ]
+        return VotingClassifier(estimators=base_estimators, voting="soft", n_jobs=-1)
+    if normalized == "booster_voting":
+        base_estimators = [
+            ("hist_gradient_boosting", make_classifier("hist_gradient_boosting", random_state=random_state)),
+            ("lightgbm", make_classifier("lightgbm", random_state=random_state)),
+            ("xgboost", make_classifier("xgboost", random_state=random_state)),
+            ("catboost_shallow", make_classifier("catboost_shallow", random_state=random_state)),
+        ]
+        return VotingClassifier(estimators=base_estimators, voting="soft", n_jobs=-1)
+    if normalized == "booster_stacking":
+        base_estimators = [
+            ("hist_gradient_boosting", make_classifier("hist_gradient_boosting", random_state=random_state)),
+            ("lightgbm", make_classifier("lightgbm", random_state=random_state)),
+            ("xgboost", make_classifier("xgboost", random_state=random_state)),
+            ("catboost_shallow", make_classifier("catboost_shallow", random_state=random_state)),
+        ]
+        return StackingClassifier(
+            estimators=base_estimators,
+            final_estimator=LogisticRegression(C=0.5, max_iter=2000, random_state=random_state),
+            stack_method="predict_proba",
+            n_jobs=-1,
+        )
     raise ValueError(f"Unknown model name: {name}")
 
 
@@ -321,5 +356,8 @@ def default_model_names() -> list[str]:
         "lightgbm",
         "xgboost",
         "catboost",
+        "soft_voting",
+        "booster_voting",
+        "booster_stacking",
         "hybrid_stacking",
     ]

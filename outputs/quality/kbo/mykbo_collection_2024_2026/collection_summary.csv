@@ -1,0 +1,4 @@
+season,raw_html_files,parsed_csv_files,raw_dir,parsed_dir
+2024,7,24,data\raw\mykbo_stats\2024,data\standardized\kbo\2024\mykbo_tables
+2025,7,24,data\raw\mykbo_stats\2025,data\standardized\kbo\2025\mykbo_tables
+2026,7,20,data\raw\mykbo_stats\2026,data\standardized\kbo\2026\mykbo_tables

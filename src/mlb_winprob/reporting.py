@@ -429,23 +429,30 @@ def write_expected_runs_holdout_report(
     holdout_seasons: list[int],
     model_names: list[str],
     prediction_mode: str | None = None,
+    synthetic_total_lines: list[float] | None = None,
 ) -> dict[str, Path]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
     metrics_frames = []
+    ou_metrics_frames = []
     for season in holdout_seasons:
         result = run_expected_runs_experiments(
             features,
             model_names=model_names,
             holdout_season=season,
             prediction_mode=prediction_mode,
+            synthetic_total_lines=synthetic_total_lines,
         )
         metrics = result.metrics.copy()
         metrics.insert(0, "holdout_season", season)
         metrics_frames.append(metrics)
+        ou_metrics = result.synthetic_ou_metrics.copy()
+        ou_metrics.insert(0, "holdout_season", season)
+        ou_metrics_frames.append(ou_metrics)
 
     all_metrics = pd.concat(metrics_frames, ignore_index=True) if metrics_frames else pd.DataFrame()
+    all_ou_metrics = pd.concat(ou_metrics_frames, ignore_index=True) if ou_metrics_frames else pd.DataFrame()
     best_by_season = (
         all_metrics.sort_values(["holdout_season", "total_mae", "total_rmse"])
         .groupby("holdout_season", as_index=False)
@@ -457,12 +464,39 @@ def write_expected_runs_holdout_report(
     paths = {
         "expected_runs_metrics": output / "expected_runs_metrics_by_holdout.csv",
         "expected_runs_best": output / "expected_runs_best_by_holdout.csv",
+        "synthetic_ou_metrics": output / "synthetic_ou_metrics_by_holdout.csv",
         "expected_runs_summary": output / "summary.md",
     }
     write_csv_table(all_metrics, paths["expected_runs_metrics"])
     write_csv_table(best_by_season, paths["expected_runs_best"])
+    write_csv_table(all_ou_metrics, paths["synthetic_ou_metrics"])
+    ou_summary = (
+        all_ou_metrics.groupby(["model_name", "total_line"], as_index=False)
+        .agg(
+            avg_ou_accuracy=("ou_accuracy", "mean"),
+            avg_pass_rate_0_5=("pass_rate_0_5", "mean"),
+            avg_strong_rate_1_5=("strong_rate_1_5", "mean"),
+            seasons=("holdout_season", "nunique"),
+        )
+        .sort_values(["avg_ou_accuracy", "model_name", "total_line"], ascending=[False, True, True])
+        if not all_ou_metrics.empty
+        else pd.DataFrame()
+    )
     paths["expected_runs_summary"].write_text(
-        "\n".join(["# Expected Runs Holdout Report", "", "## Best By Holdout", "", _markdown_table(best_by_season), ""]),
+        "\n".join(
+            [
+                "# Expected Runs Holdout Report",
+                "",
+                "## Best By Holdout",
+                "",
+                _markdown_table(best_by_season),
+                "",
+                "## Synthetic Over/Under Summary",
+                "",
+                _markdown_table(ou_summary),
+                "",
+            ]
+        ),
         encoding="utf-8",
     )
     return paths

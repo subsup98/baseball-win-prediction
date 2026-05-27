@@ -284,6 +284,47 @@ Decision: use stability results to guide grouped ablations. Do not delete one-of
 - Added: `EXPERIMENT_RUNBOOK.md`
 - Reason: make data refresh, holdout, multi-seed, pre-lineup smoke, expected-runs, booster, feature-stability, and decision-log steps reproducible.
 
+### 2026-05-27 - Recent-Season Training Challenger
+
+- Output: `outputs/experiments/recent_season_challenger_2026/`
+- Baseline: `random_forest` trained on all of 2021-2025 (current production default).
+- Candidate: `random_forest` trained on 2024-2025 only, and a recency-weighted `random_forest` (exponential season weight, half-life 2 seasons) trained on 2021-2025.
+- Reason: check whether league/roster drift makes recent-only or recency-weighted training track the 2026 season better than equal-weighted all-season training. Enabled now that a leakage-safe 2026 season-to-date feature table exists.
+- Change from previous: first recency-weighting / recent-only training comparison; added `model__sample_weight` support path in `scripts/run_recent_season_challenger.py`.
+
+| model_or_variant | eval_set | log_loss | brier_score | accuracy | acc_conf_60 | coverage_conf_60 | read |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| baseline_rf_all_seasons | target_2026_scored | 0.6944 | 0.2506 | 0.5167 | 0.5586 | 0.1375 | reference |
+| challenger_rf_2024_2025 | target_2026_scored | 0.6939 | 0.2503 | 0.5390 | 0.5155 | 0.1202 | best 2026 accuracy |
+| recency_weighted_rf_hl2 | target_2026_scored | 0.6933 | 0.2501 | 0.5180 | 0.5895 | 0.1177 | best 2026 log_loss/conf |
+| baseline_rf_all_seasons | holdout_2025 | 0.6797 | 0.2434 | 0.5584 | 0.6524 | 0.1823 | best on robust holdout |
+| challenger_rf_2024 | holdout_2025 | 0.6829 | 0.2449 | 0.5527 | 0.6491 | 0.1407 | worse than baseline |
+| recency_weighted_rf_hl2 | holdout_2025 | 0.6813 | 0.2442 | 0.5539 | 0.6547 | 0.1609 | worse than baseline |
+
+Decision: Keep `baseline + random_forest` (all 2021-2025, equal weight) as the production default. Recent-only and recency-weighted variants show a small edge on the partial 2026 sample but lose to baseline on the robust 2025 holdout, and all 2026 log_loss values sit near 0.693 (weak edge on the current sample). Not a robust improvement.
+
+Follow-up: Re-run once 2026 has a larger scored sample (e.g. post All-Star break) before reconsidering; recency weighting at a longer half-life is a future watchlist item, not a promotion candidate.
+
+### 2026-05-27 - CatBoost Season-Dependent Selection Rule
+
+- Output: `outputs/experiments/catboost_season_rule_multiseed_2021_2025/` (`per_season_winrate_vs_rf.csv`, `summary_by_variant_model.csv`)
+- Baseline: `full + random_forest`.
+- Candidate: `catboost`, `catboost_lr02` as a season-dependent switch (earlier single-seed runs showed CatBoost best in 2022/2024/2025).
+- Reason: verify with 5 seeds × 4 holdouts whether per-season CatBoost wins are stable signal or seed luck, before allowing a season-switch rule.
+- Change from previous: first multi-seed per-season CatBoost-vs-RF stability check.
+
+| model_or_variant | mean_log_loss | std_log_loss | mean_accuracy | mean_acc_conf_60 | mean_cov_conf_60 | read |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| random_forest | 0.6795 | 0.0017 | 0.5651 | 0.6599 | 0.1851 | best overall log_loss |
+| catboost_lr02 | 0.6807 | 0.0023 | 0.5668 | 0.6246 | 0.3191 | marginal accuracy, worse log_loss |
+| catboost | 0.6839 | 0.0041 | 0.5612 | 0.6147 | 0.3742 | worst log_loss |
+
+Per-season CatBoost log_loss win-rate vs RF (across 5 seeds): 2022 = 0%, 2023 ≤ 20%, 2024 = 100% (catboost_lr02) / 40% (catboost), 2025 ≤ 20%. The only stable CatBoost win is 2024, and its margin is negligible (catboost_lr02 0.6785 vs RF 0.6792, delta -0.00072).
+
+Decision: Do NOT adopt a season-dependent CatBoost switch. The earlier "CatBoost best in 2022/2024/2025" pattern does not generalize across seeds; only 2024 holds, with a trivial margin. Keep `random_forest` as the single default. `catboost_lr02` stays a watchlist-only challenger, not a selection rule.
+
+Follow-up: None. Revisit only if a future feature set materially changes 2024-style seasons.
+
 ## New Experiment Entry Template
 
 ### YYYY-MM-DD - Experiment Name

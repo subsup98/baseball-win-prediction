@@ -1,0 +1,17 @@
+holdout_season,rule_name,selected_model,selection_metric,selection_value,coverage
+2022,overall_log_loss,soft_voting,log_loss,0.6766115000880762,1.0
+2022,confidence_55,random_forest_shallow,accuracy_conf_55,0.6196943972835314,0.48477366255144033
+2022,confidence_60,random_forest_shallow,accuracy_conf_60,0.6631578947368421,0.15637860082304528
+2022,confidence_65,catboost_shallow,accuracy_conf_65,0.6571428571428571,0.12962962962962962
+2023,overall_log_loss,soft_voting,log_loss,0.6797248244384623,1.0
+2023,confidence_55,soft_voting,accuracy_conf_55,0.5996908809891809,0.5325102880658437
+2023,confidence_60,soft_voting,accuracy_conf_60,0.6709677419354839,0.19135802469135801
+2023,confidence_65,catboost_shallow,accuracy_conf_65,0.6544715447154471,0.10123456790123457
+2024,overall_log_loss,catboost_lr02,log_loss,0.6781013287537366,1.0
+2024,confidence_55,extra_trees,accuracy_conf_55,0.633419689119171,0.3178262659530671
+2024,confidence_60,soft_voting,accuracy_conf_60,0.670846394984326,0.13132976533552904
+2024,confidence_65,catboost_l2,accuracy_conf_65,0.6759581881533101,0.11815561959654179
+2025,overall_log_loss,soft_voting,log_loss,0.6781756056875404,1.0
+2025,confidence_55,extra_trees,accuracy_conf_55,0.6197674418604651,0.35390946502057613
+2025,confidence_60,random_forest_shallow,accuracy_conf_60,0.7104247104247104,0.10658436213991769
+2025,confidence_65,catboost_lr02,accuracy_conf_65,0.6970684039087948,0.12633744855967077

@@ -445,6 +445,26 @@ def test_pre_lineup_mode_uses_projected_alias_rows():
     assert g2["home_lineup_confidence"] == pytest.approx(0.55)
 
 
+def test_pre_lineup_projected_rows_can_include_game_date_without_season():
+    games, batting_logs, pitcher_logs, lineups, weather, park_factors = _raw_tables()
+    projected = lineups.copy()
+    projected["prediction_mode"] = "projected"
+    projected = projected.merge(games[["game_id", "game_date"]], on="game_id", how="left")
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode="pre_lineup"))
+
+    features = builder.build(
+        games=games,
+        batting_logs=batting_logs,
+        pitcher_logs=pitcher_logs,
+        lineups=projected,
+        weather=weather,
+        park_factors=park_factors,
+    )
+
+    assert features["prediction_mode"].eq("pre_lineup").all()
+    assert features.loc[features["game_id"] == "g2", "home_lineup_player_count"].iloc[0] == 3
+
+
 def test_estimated_high_leverage_role_score_is_capped_for_fatigue():
     games, _, pitcher_logs, *_ = _raw_tables()
     games = pd.concat(
@@ -504,3 +524,47 @@ def test_estimated_high_leverage_role_score_is_capped_for_fatigue():
     g3_home = bullpen[(bullpen["game_id"] == "g3") & (bullpen["team"] == "HOM")].iloc[0]
 
     assert g3_home["estimated_high_leverage_role_fatigue_score"] == pytest.approx(1.0)
+
+
+def test_market_line_features_include_lines_odds_movement_and_starter_changes():
+    games, batting_logs, pitcher_logs, lineups, weather, park_factors = _raw_tables()
+    market_lines = pd.DataFrame(
+        [
+            {
+                "game_id": "g2",
+                "opening_total_line": 8.5,
+                "current_total_line": 9.0,
+                "closing_total_line": 9.5,
+                "over_odds": -110,
+                "under_odds": -105,
+                "opening_home_moneyline": -120,
+                "current_home_moneyline": -135,
+                "opening_away_moneyline": 110,
+                "current_away_moneyline": 125,
+                "home_sp_id_at_open": "OLD_HSP",
+                "away_sp_id_at_open": "ASP",
+            }
+        ]
+    )
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode="confirmed_lineup"))
+
+    features = builder.build(
+        games=games,
+        batting_logs=batting_logs,
+        pitcher_logs=pitcher_logs,
+        lineups=lineups,
+        weather=weather,
+        park_factors=park_factors,
+        market_lines=market_lines,
+    )
+    g2 = features.loc[features["game_id"] == "g2"].iloc[0]
+
+    assert g2["market_total_line"] == 9.0
+    assert g2["market_closing_total_line"] == 9.5
+    assert g2["market_total_line_movement"] == 0.5
+    assert g2["market_over_implied_prob"] == pytest.approx(110 / 210)
+    assert g2["market_home_moneyline_movement"] == -15
+    assert g2["market_away_moneyline_movement"] == 15
+    assert g2["market_home_sp_changed"] == 1.0
+    assert g2["market_away_sp_changed"] == 0.0
+    assert g2["market_starter_change_count"] == 1.0

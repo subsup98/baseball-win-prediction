@@ -1,0 +1,4 @@
+variant,model_name,mean_log_loss_delta_vs_baseline,median_log_loss_delta_vs_baseline,log_loss_win_rate_vs_baseline,mean_accuracy_delta_vs_baseline,accuracy_win_rate_vs_baseline
+full,random_forest,0.0,0.0,0.0,0.0,0.0
+full,catboost_lr02,0.0011211107710518476,0.0011573978381580474,0.35,0.0017897676735332934,0.65
+full,catboost,0.0043592407370349915,0.0029434930867565656,0.1,-0.00386915986019411,0.35

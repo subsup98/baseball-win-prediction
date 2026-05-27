@@ -561,19 +561,59 @@ away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
 
 ### 다음 우선순위
 
-1. [ ] 실제 projected lineup source 1개를 선택해 collector/normalizer 구현
+1. [x] 실제 projected lineup source 1개를 선택해 collector/normalizer 구현
    - 후보 source의 ToS/API 조건 확인
    - `captured_at` 기준 pre-game snapshot 저장
    - historical backfill 가능 여부 확인
+   - 완료 반영:
+     - BALLDONTLIE MLB Lineups API collector/normalizer MVP 추가
+     - `collect-balldontlie-lineups`, `standardize-balldontlie-lineups` CLI 추가
+     - provider `external_game_id`/`external_player_id` 보존 및 MLBAM ID mapping 옵션 추가
+     - `build-external-lineup-id-maps` CLI 추가
+     - normalized name 기반 player map, game date/team pair 기반 game map 생성 경로 추가
+     - 실제 운영 전 API 키, provider terms, ID map 검증 필요
 
 2. [ ] `pre_lineup` 실제 source smoke test
    - 실제 source row로 `lineups_projected_*.csv` 생성
    - `build-features --prediction-mode pre_lineup` 실행
    - confirmed-lineup feature 대비 null-rate와 성능 차이 확인
+   - 선행 조건:
+     - 실제 API response schema 확인
+     - 자동 매핑에서 누락된 ambiguous ID 수동 검토
+   - 준비 완료:
+     - `scripts/run_pre_lineup_fixture_smoke.py` 추가
+     - fixture-backed provider JSON -> standardize -> ID map -> re-standardize -> pre-lineup feature build 통과
+     - output: `outputs/pre_lineup_fixture_smoke/`
+     - result: 18 projected rows, 1 game mapped, 14 players auto-mapped, 1 pre-lineup feature row 생성
+   - 실제 무료 source smoke:
+     - MLB Stats API schedule/boxscore snapshot 기반 `collect-mlb-lineup-snapshots` CLI 추가
+     - output: `outputs/mlb_lineup_snapshot_smoke/`
+     - result: 2026-05-26 schedule 15경기, snapshot 15개, pre-lineup feature 15행 생성
+     - 현재 snapshot 시점에는 공식 batting order 미게시 상태라 lineup feature는 null 유지
+   - 완료 경기 공식 라인업 smoke:
+     - output: `outputs/mlb_completed_lineup_smoke/`
+     - result: 2026-05-25 완료 경기 13경기, 공식 lineup 234행, pre-lineup feature 13행 생성
+     - result: baseline prediction CSV 생성, 9/13 winner direction 일치
+     - 주의: 완료 경기 boxscore 기반이므로 공식 라인업 연결 검증용이며 true pre-game 성능 아님
+   - 수동 입력 경로:
+     - `write-manual-lineup-template`, `standardize-manual-lineups` CLI 추가
+     - output: `outputs/manual_lineup_smoke/`
+     - result: 수동 18행 라인업 입력 -> 표준 lineups -> pre-lineup feature 생성 확인
+     - `fit-final-model` CLI 추가 및 `random_forest` 최종 모델 번들 생성
+     - `predict --game-ids` 필터 추가
+     - result: 수동 라인업 feature -> `pre_lineup` 승률 JSON 출력 확인
+     - `fit-final-runs-model`, `predict-runs` CLI 추가
+     - result: expected-runs 기반 언오버 baseline 생성
+     - output: `outputs/mlb_completed_lineup_smoke/over_under_predictions_8_5.csv`
+     - result: fixed line 8.5에서 7/13 방향 일치, 대부분 pass margin
 
-3. [ ] CatBoost season-dependent selection rule 검증
+3. [x] CatBoost season-dependent selection rule 검증
    - 2022/2024/2025 일부 holdout에서 CatBoost가 best였으므로 season별 switch가 일반화되는지 multi-seed로 확인
    - RF default를 대체하지 않고 challenger rule로만 검증
+   - 완료 반영:
+     - `scripts/run_multiseed_model_experiment.py` 5 seed × 4 holdout 실행
+     - `outputs/experiments/catboost_season_rule_multiseed_2021_2025/`
+     - 판정: season-switch rule 채택 안 함. CatBoost가 seed에 걸쳐 안정적으로 이기는 시즌은 2024뿐이며 margin도 미미(-0.00072). RF 단일 default 유지 (MODEL_IMPROVEMENT_LOG 2026-05-27)
 
 4. [ ] Stable feature group ablation
    - feature stability 결과를 기반으로 stable group / low-stability group ablation 구성
@@ -582,3 +622,68 @@ away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
 5. [ ] Windows test warning 정리
    - sklearn/joblib subprocess reader thread의 cp949 decode warning 원인 확인
    - 테스트 통과에는 영향 없지만 CI/로그 품질 개선 후보
+# 2026-05-26 Score/OU baseline direction update
+
+- [x] Confirm actual scores are stored as `home_score` / `away_score`
+- [x] Train first direct OU baseline with fixed `total_line=8.5`
+- [x] Add combined win + score + OU prediction output via `predict-game`
+- [x] Document that expected score / expected total should be the primary output
+- [x] Document that direct OU model is currently a secondary confirmation signal
+- [x] Add score-model-focused holdout report for total runs and synthetic OU lines
+- [ ] Compare score model alternatives beyond current random forest regressor
+- [ ] Add combined recommendation rules: pass / lean / strong
+- [ ] Backfill historical game-specific market total lines and odds
+- [ ] Improve predicted total calibration/dispersion around middle lines such as 8.5
+
+# 2026-05-26 Win probability improvement
+
+- [x] Run expected-run-diff-as-win-feature experiment
+- [x] Compare baseline vs expected-runs feature variant across major classifier candidates
+- [x] Confirm current overall win baseline remains `baseline + random_forest`
+- [x] Identify confidence-band challengers: `random_forest_shallow`, `extra_trees`
+- [x] Add dedicated confidence-band report across model candidates
+- [x] Evaluate 55/58/60 confidence bands on recent completed games
+- [x] Run feature group ablation for win-probability candidates
+- [x] Create reduced feature table by removing optional/redundant lineup features
+- [x] Formalize pass/lean/strong win-pick rules
+- [x] Train/save reduced `random_forest_shallow` challenger bundle
+- [x] Compare reduced shallow challenger on recent completed-week smoke
+- [x] Add soft voting / booster voting / booster stacking model candidates
+- [x] Run boosting/voting/stacking full-feature holdout comparison
+- [x] Train final soft-voting candidate bundle
+- [x] Compare soft-voting candidate on recent completed-week smoke
+- [x] Build formal out-of-fold selective-pick report for main/challenger agreement
+- [x] Build 2026-ready season-to-date feature pipeline before promoting ensemble models
+  - 완료 반영:
+    - `scripts/build_season_to_date_features.py` 추가 (명시적 snapshot 디렉터리 기반, leakage-safe)
+    - 2026 Statcast 수집: `data/raw/statcast/statcast_2026.csv` 237836행
+    - `data/processed/features_confirmed_2026_to_2026-05-26_with_park_factors_statcast.csv` 807행 생성
+    - 5월 이후 null-rate가 과거 baseline 수준으로 정상화 (lineup statcast 0.0%, SP statcast 6.8%)
+    - soft_voting recent-week 과신/오답 해소: acc 0.411->0.521, conf 0.614->0.545
+- [x] Test recent-season weighting or 2024-2025-only training challenger
+  - 완료 반영:
+    - `scripts/run_recent_season_challenger.py` 추가 (2024-2025-only + recency-weighted RF)
+    - `outputs/experiments/recent_season_challenger_2026/`
+    - 판정: baseline(전 시즌) 유지. 2026 소표본에선 소폭 우위지만 2025 holdout에선 baseline이 최선 (MODEL_IMPROVEMENT_LOG 2026-05-27 참조)
+
+# 2026-05-26 Recent-week failure diagnostics
+
+- [x] Isolate 2026-05-23 scored games from recent completed-game smoke
+- [x] Correct 2026-05-23 denominator to scored games only: `3 / 15 = 20.0%`
+- [x] Check whether 2026-05-23 was a simple home/away bias
+- [x] Confirm 2026-05-23 was mostly forced low-confidence picks: average favorite confidence `52.2%`
+- [x] Save 2026-05-23 diagnostic CSVs under `outputs/mlb_recent_week_predictions_2026-05-19_2026-05-25/may23_diagnostics/`
+- [x] Build formal pass/lean/strong rules before evaluating all recent games as actionable picks
+- [x] Add daily breakdown report that excludes games without final scores
+- [x] Build 2026 season-to-date feature pipeline to reduce current smoke-test distribution mismatch
+  - `scripts/build_season_to_date_features.py` + 2026 Statcast 수집으로 해소 (0.1.52 참조)
+
+# 2026-05-26 Win pick rule baseline
+
+- [x] Add reusable `apply_win_pick_rules` and `summarize_win_pick_rules`
+- [x] Add `win-pick-rule-report` CLI
+- [x] Generate recent-week main RF rule reports for `53/55`, `54/57`, and `55/60`
+- [x] Verify default `55/60` rule: 11 actionable picks, 7/11 correct
+- [x] Verify `54/57` comparison rule: 20 actionable picks, 13/20 correct
+- [x] Validate pick thresholds on historical out-of-fold predictions
+- [x] Add agreement-based rule using main RF + reduced shallow + soft voting candidates

@@ -57,6 +57,9 @@ def test_expected_runs_experiment_reports_run_metrics():
 
     assert result.metrics.loc[0, "model_name"] == "ridge"
     assert result.metrics.loc[0, "n_games"] == 2
+    assert "total_within_2" in result.metrics.columns
+    assert set(result.synthetic_ou_metrics["total_line"]) == {6.5, 7.5, 8.5, 9.5, 10.5}
+    assert {"ou_accuracy", "pass_rate_0_5", "strong_rate_1_5"}.issubset(result.synthetic_ou_metrics.columns)
     assert result.feature_columns == ["feature_a"]
 
 

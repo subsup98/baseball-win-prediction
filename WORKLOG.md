@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-05-27
+
+### KBO 트랙 — 전체 시즌 canonical 데이터 확보
+
+- MyKBO 게임 페이지 수집기에 요청 딜레이(`--delay`, jitter)와 병렬 워커(`--workers`)를 추가하고, `fetch_url`에 429 재시도(`Retry-After` 기반 지수 백오프)를 구현했습니다. 단일 rate-limit 응답이 배치 전체를 중단시키지 않습니다.
+- 2024-2026 전체 final 경기 1,752건(2024: 741, 2025: 737, 2026: 274)의 게임 페이지를 수집하고 10,512개 테이블 파일로 파싱했습니다.
+- 전체 시즌 canonical 테이블을 생성했습니다: `data/standardized/kbo/canonical_2024_2026/` — `batting_logs`(44,733행), `pitcher_logs`(17,274행), `lineups`(31,536행). 스케줄 final 대비 커버리지 100%.
+- 품질: 선발 타자(타순 1-9)의 `mykbo_player_id` 누락 0%, 라인업 `player_id` 누락 0%, 경기당 선발투수 2명·라인업 18칸 정상. 타순 없는 대타/대주자 행(~29.5%)만 ID 미매칭(기존 crosswalk gap, confirmed-lineup 선발에는 영향 없음).
+- KBO First Milestone 1단계(한 시즌 canonical 변환) 완료 및 초과 달성(3시즌 확보). 다음: 공개데이터 세이버메트릭 feature build(2단계).
+
 ## 2026-05-15
 
 ### 0.1.0 초기 구현
@@ -1398,3 +1408,1313 @@ Next work queue:
 3. Evaluate CatBoost season-dependent selection rules with multi-seed validation.
 4. Run grouped ablation using stable feature groups.
 5. Clean up Windows subprocess encoding warnings.
+
+### 0.1.31 Projected Lineup Source Collector MVP
+
+- Added a first automated projected-lineup ingestion path for the BALLDONTLIE MLB Lineups API.
+- New collector:
+  - `BallDontLieMLBCollector`
+  - `lineups(...)` paginates API responses.
+  - `save_lineups(...)` stores raw provider JSON snapshots.
+  - `normalize_lineups(...)` converts provider JSON into standard `lineups.csv` rows.
+- New CLI commands:
+  - `collect-balldontlie-lineups`
+  - `standardize-balldontlie-lineups`
+- Standardized rows preserve:
+  - `external_game_id`
+  - `external_player_id`
+  - `provider_lineup_status`
+  - `captured_at`
+  - `lineup_source=balldontlie_mlb`
+  - `prediction_mode=projected` by default
+- Optional mapping inputs let provider IDs translate into the MLBAM IDs used by the existing feature pipeline:
+  - `--game-id-map` with `external_game_id,game_id`
+  - `--player-id-map` with `external_player_id,player_id`
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe -m pytest tests\test_collectors.py --basetemp .pytest_tmp
+10 passed
+```
+
+Remaining blocker:
+
+- A real source-backed `pre_lineup` feature smoke test still needs API credentials/terms confirmation plus provider-to-MLBAM game/player ID maps.
+
+### 0.1.32 External Lineup ID Map Helpers
+
+- Added provider-to-MLBAM mapping helpers for projected lineup sources.
+- New functions:
+  - `build_external_player_id_map(...)`
+  - `build_external_game_id_map(...)`
+- New CLI command:
+  - `build-external-lineup-id-maps`
+- Player map behavior:
+  - input: normalized provider `lineups.csv` with `external_player_id`, `player_name`
+  - reference: `data/processed/id_map.csv`
+  - output: `external_player_id,player_id`
+  - only unique normalized-name matches are emitted
+  - optional `--season` filters active MLB seasons
+- Game map behavior:
+  - input: normalized provider `lineups.csv` with `external_game_id`, `game_date`, `home_team`, `away_team`
+  - reference: project `games.csv`
+  - output: `external_game_id,game_id`
+  - only unique date/team-pair matches are emitted
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe -m pytest tests\test_id_map.py tests\test_collectors.py --basetemp .pytest_tmp
+13 passed
+```
+
+Next:
+
+- Run the collector against a real BALLDONTLIE response once credentials/terms are confirmed.
+- Review ambiguous/unmapped provider IDs.
+- Re-run `standardize-balldontlie-lineups` with the generated maps, then run `build-features --prediction-mode pre_lineup`.
+
+### 0.1.33 Fixture-Backed Pre-Lineup Smoke Test
+
+- Added `scripts/run_pre_lineup_fixture_smoke.py`.
+- The script creates a provider-shaped projected-lineup JSON snapshot from existing standardized MLBAM game data, then runs the same ingestion path planned for a live source.
+- Default smoke game:
+  - `game_id=778563`
+  - `2025-03-18`
+  - CHC vs LAD
+- Smoke output:
+  - `outputs/pre_lineup_fixture_smoke/raw/balldontlie_lineups_fixture.json`
+  - `outputs/pre_lineup_fixture_smoke/standardized/lineups_unmapped.csv`
+  - `outputs/pre_lineup_fixture_smoke/metadata/balldontlie_game_id_map.csv`
+  - `outputs/pre_lineup_fixture_smoke/metadata/balldontlie_player_id_map.csv`
+  - `outputs/pre_lineup_fixture_smoke/standardized/lineups_projected.csv`
+  - `outputs/pre_lineup_fixture_smoke/processed/features_pre_lineup_fixture.csv`
+  - `outputs/pre_lineup_fixture_smoke/summary.csv`
+- Result:
+  - 18 projected lineup rows normalized
+  - 1 external game ID mapped
+  - 14 external player IDs auto-mapped
+  - 1 `pre_lineup` feature row generated
+- Fixes discovered during smoke:
+  - `FeatureBuilder` now handles lineup inputs that already include `game_date` but need `season` merged from `games`.
+  - lineup `player_id` dtype is aligned with batter profile IDs, so numeric MLBAM IDs and string test IDs both work.
+  - unmapped provider player IDs no longer crash lineup feature generation.
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe scripts\run_pre_lineup_fixture_smoke.py
+.\.venv\Scripts\python.exe -m pytest --basetemp .pytest_tmp
+48 passed
+```
+
+Remaining live-source blocker:
+
+- `BALLDONTLIE_API_KEY` is not set in the current environment, so the live API response schema and real source-backed smoke test still need credentials/terms confirmation.
+
+### 0.1.34 Free MLB Stats API Lineup Snapshot Path
+
+- Switched the preferred low-cost `pre_lineup` source from BALLDONTLIE to MLB Stats API boxscore snapshots because BALLDONTLIE lineups require a paid GOAT tier.
+- Added `collect-mlb-lineup-snapshots` CLI.
+  - input: schedule CSV
+  - output: boxscore snapshot JSON files
+  - optional manifest records `game_id`, `snapshot_path`, `captured_at`, `lineup_source`
+- Extended `standardize-mlb-boxscores` with:
+  - `--lineup-source`
+  - `--captured-at`
+  - `--lineup-confidence`
+- Extended `standardize_mlb_stats_api_boxscores(...)` so standardized lineup rows can preserve snapshot metadata.
+- Hardened pre-game empty table handling:
+  - empty `lineups.csv`, `batting_logs.csv`, and `pitcher_logs.csv` now retain schema headers
+  - downstream `build-features --prediction-mode pre_lineup` can produce null lineup features without confirmed-lineup fallback
+
+Live smoke:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli collect-mlb-schedule \
+  --start-date 2026-05-26 \
+  --end-date 2026-05-26 \
+  --output outputs\mlb_lineup_snapshot_smoke\schedule_2026-05-26.csv
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli collect-mlb-lineup-snapshots \
+  --games outputs\mlb_lineup_snapshot_smoke\schedule_2026-05-26.csv \
+  --output-dir outputs\mlb_lineup_snapshot_smoke\boxscores \
+  --manifest outputs\mlb_lineup_snapshot_smoke\manifest.csv \
+  --workers 4
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli standardize-mlb-boxscores \
+  --schedule outputs\mlb_lineup_snapshot_smoke\schedule_2026-05-26.csv \
+  --boxscore-dir outputs\mlb_lineup_snapshot_smoke\boxscores \
+  --output-dir outputs\mlb_lineup_snapshot_smoke\standardized \
+  --prediction-mode pre_lineup \
+  --lineup-source mlb_stats_api_boxscore_snapshot \
+  --captured-at 2026-05-26T04:06:02Z \
+  --lineup-confidence 1.0
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli build-features \
+  --games outputs\mlb_lineup_snapshot_smoke\standardized\games.csv \
+  --batting-logs outputs\mlb_lineup_snapshot_smoke\standardized\batting_logs.csv \
+  --pitcher-logs outputs\mlb_lineup_snapshot_smoke\standardized\pitcher_logs.csv \
+  --lineups outputs\mlb_lineup_snapshot_smoke\standardized\lineups.csv \
+  --weather outputs\mlb_lineup_snapshot_smoke\standardized\weather.csv \
+  --prediction-mode pre_lineup \
+  --output outputs\mlb_lineup_snapshot_smoke\features_pre_lineup.csv
+```
+
+Result:
+
+```text
+schedule rows: 15
+snapshot JSON files: 15
+standardized games: 15
+standardized lineups: 0
+pre_lineup feature rows: 15
+home/away lineup_player_count non-null: 0
+```
+
+Readout:
+
+- The free MLB Stats API path works end-to-end.
+- The snapshot was taken before official batting orders were posted, so lineup features correctly remain null.
+- Next live check should rerun `collect-mlb-lineup-snapshots` closer to first pitch and compare how many games have non-null lineup features.
+
+### 0.1.35 Manual Projected Lineup Input
+
+- Added a manual lineup input path for user-authored expected lineups.
+- New standardization helpers:
+  - `manual_lineup_template(...)`
+  - `standardize_manual_lineups(...)`
+- New CLI commands:
+  - `write-manual-lineup-template`
+  - `standardize-manual-lineups`
+- Manual template columns:
+  - `game_id`
+  - `team`
+  - `batting_order`
+  - `player_id`
+  - `player_name`
+  - `bats`
+  - `position`
+  - `lineup_confidence`
+  - `is_available`
+  - `is_expected_starter`
+  - `injury_status`
+  - `rest_signal`
+  - `notes`
+- If `player_id` is blank, `standardize-manual-lineups` can use `data/processed/id_map.csv` to resolve unique normalized `player_name` matches.
+
+Smoke:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli write-manual-lineup-template \
+  --games outputs\mlb_lineup_snapshot_smoke\standardized\games.csv \
+  --game-ids 824434 \
+  --output outputs\manual_lineup_smoke\manual_lineup_template.csv
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli standardize-manual-lineups \
+  --input outputs\manual_lineup_smoke\manual_lineup_filled.csv \
+  --output outputs\manual_lineup_smoke\lineups_manual.csv \
+  --prediction-mode projected \
+  --lineup-source manual \
+  --captured-at 2026-05-26T04:30:00Z
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli build-features \
+  --games outputs\mlb_lineup_snapshot_smoke\standardized\games.csv \
+  --batting-logs data\standardized\mlb_stats_api_2025\batting_logs.csv \
+  --pitcher-logs data\standardized\mlb_stats_api_2025\pitcher_logs.csv \
+  --lineups outputs\manual_lineup_smoke\lineups_manual.csv \
+  --weather outputs\mlb_lineup_snapshot_smoke\standardized\weather.csv \
+  --prediction-mode pre_lineup \
+  --output outputs\manual_lineup_smoke\features_manual_pre_lineup.csv
+```
+
+Result:
+
+```text
+manual template rows: 18
+manual standardized rows: 18
+manual feature rows: 15
+game 824434 home_lineup_player_count: 9
+game 824434 away_lineup_player_count: 9
+```
+
+Next:
+
+- Train or select a saved model bundle so manual `features_manual_pre_lineup.csv` can flow directly into `mlb-winprob predict`.
+
+### 0.1.36 Final Model Bundle And Manual Lineup Prediction Smoke
+
+- Added `fit-final-model` CLI to train a deployment-style model on all available rows instead of a season holdout split.
+- Final model smoke:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli fit-final-model \
+  --features data\processed\features_confirmed_2021_2025_with_park_factors_statcast.csv \
+  --prediction-mode confirmed_lineup \
+  --model-name random_forest \
+  --output-dir outputs\final_models\full_random_forest_confirmed_2021_2025_statcast
+```
+
+Result:
+
+```text
+best_model.joblib written
+training_rows=12148
+feature_count=162
+model_name=random_forest
+```
+
+- Hardened `predict`:
+  - missing model feature columns are filled with `NaN`
+  - prediction matrix is coerced to numeric
+  - added `--game-ids` to predict only selected games from a multi-game feature file
+- Manual lineup prediction smoke:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli predict \
+  --features outputs\manual_lineup_smoke\features_manual_pre_lineup.csv \
+  --model outputs\final_models\full_random_forest_confirmed_2021_2025_statcast\best_model.joblib \
+  --prediction-mode pre_lineup \
+  --game-ids 824434
+```
+
+Result:
+
+```json
+{"home_win_probability": 0.4772758014293535, "away_win_probability": 0.5227241985706466, "model_name": "random_forest", "prediction_mode": "pre_lineup", "key_reasons": ["라인업 wOBA 차이가 홈팀에 유리합니다.", "불펜 피로도 차이가 홈팀에 유리합니다."]}
+```
+
+Readout:
+
+- User-authored manual lineups can now flow to a win-probability JSON response.
+- The saved model was trained on confirmed-lineup historical features, so live/manual `pre_lineup` predictions should still be treated as an operational smoke baseline until enough real pre-lineup snapshots are evaluated.
+
+### 0.1.37 Completed-Game Official Lineup Smoke
+
+- Used MLB Stats API completed games as a practical official-lineup smoke test.
+- Date selected:
+  - `2026-05-25` MLB date
+  - chosen because the user is in Korea on `2026-05-26`, so those games are already completed
+- Commands:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli collect-mlb-schedule \
+  --start-date 2026-05-25 \
+  --end-date 2026-05-25 \
+  --output outputs\mlb_completed_lineup_smoke\schedule_2026-05-25.csv
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli collect-mlb-lineup-snapshots \
+  --games outputs\mlb_completed_lineup_smoke\schedule_2026-05-25.csv \
+  --output-dir outputs\mlb_completed_lineup_smoke\boxscores \
+  --manifest outputs\mlb_completed_lineup_smoke\manifest.csv \
+  --workers 4
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli standardize-mlb-boxscores \
+  --schedule outputs\mlb_completed_lineup_smoke\schedule_2026-05-25.csv \
+  --boxscore-dir outputs\mlb_completed_lineup_smoke\boxscores \
+  --output-dir outputs\mlb_completed_lineup_smoke\standardized \
+  --prediction-mode pre_lineup \
+  --lineup-source mlb_stats_api_completed_boxscore_lineup_smoke \
+  --captured-at 2026-05-26T04:30:00Z \
+  --lineup-confidence 1.0
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli build-features \
+  --games outputs\mlb_completed_lineup_smoke\standardized\games.csv \
+  --batting-logs data\standardized\mlb_stats_api_2025\batting_logs.csv \
+  --pitcher-logs data\standardized\mlb_stats_api_2025\pitcher_logs.csv \
+  --lineups outputs\mlb_completed_lineup_smoke\standardized\lineups.csv \
+  --weather outputs\mlb_completed_lineup_smoke\standardized\weather.csv \
+  --prediction-mode pre_lineup \
+  --output outputs\mlb_completed_lineup_smoke\features_pre_lineup.csv
+```
+
+Result:
+
+```text
+schedule rows: 13
+boxscore snapshots: 13
+official lineup rows: 234
+games with lineups: 13
+pre_lineup feature rows: 13
+home/away lineup_player_count non-null: 13 / 13
+prediction summary: outputs\mlb_completed_lineup_smoke\predictions.csv
+winner direction smoke: 9 / 13
+```
+
+Readout:
+
+- MLB official lineup extraction works when lineups are available.
+- This is not true pre-game validation because the games were already completed.
+- It does validate the lineups -> features -> saved baseline model -> predictions pipeline with non-null official lineup features.
+
+### 0.1.38 Over/Under Baseline From Expected Runs
+
+- Added `fit-final-runs-model` CLI.
+  - trains separate home/away score regressors on all available rows
+  - writes `runs_model.joblib`
+- Added `predict-runs` CLI.
+  - predicts home score, away score, total, and run differential
+  - supports `--total-line` for one line across all games
+  - supports `--total-lines` CSV with `game_id,total_line`
+  - outputs `ou_pick`, `ou_margin`, and `ou_confidence`
+  - confidence buckets:
+    - `pass`: margin <= `--pass-margin` (default 0.5)
+    - `lean`: margin <= `--strong-margin` (default 1.5)
+    - `strong`: margin > `--strong-margin`
+
+Final runs model:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli fit-final-runs-model \
+  --features data\processed\features_confirmed_2021_2025_with_park_factors_statcast.csv \
+  --prediction-mode confirmed_lineup \
+  --model-name random_forest_regressor \
+  --output-dir outputs\final_models\runs_random_forest_confirmed_2021_2025_statcast
+```
+
+Result:
+
+```text
+training_rows=12148
+feature_count=162
+model_name=random_forest_regressor
+```
+
+Over/under smoke:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli predict-runs \
+  --features outputs\mlb_completed_lineup_smoke\features_pre_lineup.csv \
+  --model outputs\final_models\runs_random_forest_confirmed_2021_2025_statcast\runs_model.joblib \
+  --prediction-mode pre_lineup \
+  --total-line 8.5 \
+  --output outputs\mlb_completed_lineup_smoke\over_under_predictions_8_5.csv
+```
+
+Result at fixed line `8.5`:
+
+```text
+correct: 7 / 13
+pass: 11 games
+lean: 2 games
+strong: 0 games
+```
+
+Line sensitivity:
+
+```text
+6.5  correct 9/13
+7.5  correct 8/13
+8.5  correct 7/13
+9.5  correct 9/13
+10.5 correct 10/13
+```
+
+Readout:
+
+- Total-run prediction is more useful than exact-score prediction.
+- The current model's predicted totals cluster near league-average run environments, so true confidence should be based on margin from the market line.
+- Most `8.5` picks in the smoke were classified as `pass`, which is the desired behavior for small edges.
+
+### 0.1.39 Market Line Features And Direct Over/Under Model Path
+
+- Added optional market-line input to feature generation.
+  - `build-features --market-lines <csv>`
+  - supported fields include opening/current/closing total, over/under odds, moneyline movement, and starter-change signals
+  - derived features include:
+    - `market_total_line`
+    - `market_total_line_movement`
+    - `market_over_implied_prob`
+    - `market_under_implied_prob`
+    - `market_ou_vig`
+    - `market_home_moneyline_movement`
+    - `market_away_moneyline_movement`
+    - `market_home_sp_changed`
+    - `market_away_sp_changed`
+    - `market_starter_change_count`
+- Added a user-editable market-line template command:
+
+```text
+mlb-winprob write-market-lines-template \
+  --games outputs/mlb_completed_lineup_smoke/standardized/games.csv \
+  --output outputs/mlb_completed_lineup_smoke/market_lines_template.csv
+```
+
+- Added direct over/under model commands:
+  - `fit-final-ou-model`
+  - `predict-ou`
+- The direct model trains on `actual_total > market_total_line`.
+- `market_closing_total_line` is excluded from the normal feature set to avoid accidentally training on a future closing number.
+
+Important data note:
+
+- The existing 2021-2025 baseball dataset is enough for baseball context features.
+- A true market-aware over/under model still needs historical market-line rows for those same games.
+- Without historical total lines/odds snapshots, the current system can compare predicted totals to a user-provided line, but it cannot learn line movement, odds, or market behavior from history.
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe -m pytest tests\test_features.py tests\test_standardize.py --basetemp .pytest_tmp
+19 passed
+
+.\.venv\Scripts\python.exe -m pytest --basetemp .pytest_tmp
+55 passed, 4 warnings
+
+.\.venv\Scripts\python.exe -m mlb_winprob.cli write-market-lines-template \
+  --games outputs\mlb_completed_lineup_smoke\standardized\games.csv \
+  --output outputs\mlb_completed_lineup_smoke\market_lines_template.csv
+Wrote 13 market line template rows
+```
+
+### 0.1.40 Combined Win/Score/Over-Under Prediction Output
+
+- Added `predict-game` CLI for one-row-per-game combined prediction output.
+- The command combines:
+  - win probability model (`--win-model`)
+  - expected score model (`--runs-model`)
+  - optional direct over/under classifier (`--ou-model`)
+- Output columns include:
+  - `home_win_probability`, `away_win_probability`, `win_pick`
+  - `pred_home_score`, `pred_away_score`, `pred_total`, `rounded_score`
+  - `total_line`, `runs_ou_margin`, `runs_ou_pick`, `runs_ou_confidence`
+  - optional direct OU fields: `direct_prob_over`, `direct_prob_under`, `direct_ou_pick`
+  - if actual scores exist: `win_correct`, `actual_total`, `actual_ou`, `runs_ou_correct`
+
+Smoke command:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli predict-game \
+  --features outputs\mlb_completed_lineup_smoke\features_pre_lineup.csv \
+  --win-model outputs\final_models\full_random_forest_confirmed_2021_2025_statcast\best_model.joblib \
+  --runs-model outputs\final_models\runs_random_forest_confirmed_2021_2025_statcast\runs_model.joblib \
+  --prediction-mode pre_lineup \
+  --total-line 8.5 \
+  --output outputs\mlb_completed_lineup_smoke\combined_predictions_8_5.csv
+```
+
+Result:
+
+```text
+Wrote 13 combined game predictions
+tests\test_models.py tests\test_features.py: 14 passed, 4 warnings
+```
+
+### 0.1.41 Direct Over/Under Baseline Model
+
+- Extended `fit-final-ou-model` so it can train from:
+  - `market_total_line` already present in features
+  - `--total-lines game_id,total_line`
+  - a fixed baseline `--total-line`
+- Trained a first direct over/under baseline with fixed total line `8.5`.
+
+Command:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli fit-final-ou-model \
+  --features data\processed\features_confirmed_2021_2025_with_park_factors_statcast.csv \
+  --prediction-mode confirmed_lineup \
+  --model-name random_forest \
+  --total-line 8.5 \
+  --output-dir outputs\final_models\ou_random_forest_confirmed_2021_2025_statcast_fixed_8_5
+```
+
+Result:
+
+```text
+training_rows=12148
+feature_count=163
+model_name=random_forest
+over_rate=0.491
+model: outputs\final_models\ou_random_forest_confirmed_2021_2025_statcast_fixed_8_5\ou_model.joblib
+```
+
+Combined smoke with win + score + direct OU:
+
+```text
+output: outputs\mlb_completed_lineup_smoke\combined_predictions_with_ou_model_8_5.csv
+runs-model OU direction at fixed 8.5: 7 / 13
+direct OU model direction at fixed 8.5: 8 / 13
+```
+
+Readout:
+
+- This completes the first over/under-specific baseline.
+- It is not market-aware yet because historical game-specific total lines/odds are not in the dataset.
+- When historical lines are backfilled, retrain the same command without a fixed line and with feature-level `market_total_line`.
+
+### 0.1.42 Modeling Direction Clarification
+
+- Confirmed that score data is already stored in the project-standard data.
+  - `games.csv` contains `home_score`, `away_score`.
+  - feature CSVs preserve `home_score`, `away_score` when actual scores are available.
+  - win target is derived as `home_team_win = home_score > away_score`.
+  - expected-runs models train on `home_score` and `away_score`.
+- Clarified model roles:
+  - Win model: predicts `home_win_probability` / `away_win_probability`.
+  - Score model: predicts `pred_home_score`, `pred_away_score`, `pred_total`, and `pred_run_diff`.
+  - Runs-based OU signal: compares `pred_total` to `total_line`.
+  - Direct OU model: predicts `P(actual_total > total_line)`.
+- Current direct OU baseline:
+  - trained with fixed `total_line=8.5`
+  - useful as a first baseline, but not yet market-aware
+  - should be treated as a secondary signal until game-specific historical market lines are added
+- Product direction:
+  - make expected score / expected total the primary output
+  - use direct OU probability as a confirmation/pass signal
+  - if score model and direct OU model disagree, mark the game as lower confidence or pass
+
+Recommended next work:
+
+1. Improve the score model baseline before chasing more complex OU modeling.
+   - Add holdout metrics focused on total runs:
+     - total MAE
+     - total RMSE
+     - within 1 / 2 / 3 runs
+     - OU accuracy by synthetic lines such as 6.5, 7.5, 8.5, 9.5, 10.5
+   - Compare current RF regressor against alternatives.
+
+2. Add a combined signal report.
+   - For each game, compare:
+     - `pred_total - total_line`
+     - direct `prob_over`
+     - agreement/disagreement between score model and OU classifier
+   - Produce `pass`, `lean`, `strong` recommendation rules.
+
+3. Backfill market lines when possible.
+   - Required fields:
+     - `game_id`
+     - `opening_total_line`
+     - `current_total_line` or close-time available line
+     - `over_odds`, `under_odds`
+     - movement fields
+     - starter-change snapshot fields
+   - Once this exists, retrain direct OU with real game-specific `market_total_line`.
+
+### 0.1.43 Score-Focused Holdout Report With Synthetic OU Lines
+
+- Extended `expected-runs-report` with score-model-focused diagnostics:
+  - `total_within_1`
+  - `total_within_2`
+  - `total_within_3`
+  - synthetic OU accuracy by configurable lines
+  - synthetic pass/strong rates by predicted-total margin
+- Added CLI option:
+  - `--synthetic-total-lines`, default `6.5,7.5,8.5,9.5,10.5`
+- Generated score/OU baseline report:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli expected-runs-report \
+  --features data\processed\features_confirmed_2021_2025_with_park_factors_statcast.csv \
+  --output-dir outputs\experiments\expected_runs_score_ou_baseline_confirmed_2021_2025 \
+  --holdout-seasons 2022,2023,2024,2025 \
+  --models ridge,random_forest_regressor \
+  --prediction-mode confirmed_lineup \
+  --synthetic-total-lines 6.5,7.5,8.5,9.5,10.5
+```
+
+Outputs:
+
+```text
+outputs\experiments\expected_runs_score_ou_baseline_confirmed_2021_2025\expected_runs_metrics_by_holdout.csv
+outputs\experiments\expected_runs_score_ou_baseline_confirmed_2021_2025\expected_runs_best_by_holdout.csv
+outputs\experiments\expected_runs_score_ou_baseline_confirmed_2021_2025\synthetic_ou_metrics_by_holdout.csv
+outputs\experiments\expected_runs_score_ou_baseline_confirmed_2021_2025\summary.md
+```
+
+Best total-run model by holdout:
+
+```text
+2022 random_forest_regressor total_mae 3.507 total_within_2 0.349 total_within_3 0.491
+2023 ridge                   total_mae 3.571 total_within_2 0.352 total_within_3 0.501
+2024 random_forest_regressor total_mae 3.328 total_within_2 0.359 total_within_3 0.513
+2025 ridge                   total_mae 3.534 total_within_2 0.344 total_within_3 0.499
+```
+
+Synthetic OU average accuracy:
+
+```text
+random_forest_regressor line 10.5: 0.677
+random_forest_regressor line  6.5: 0.675
+ridge                   line 10.5: 0.671
+ridge                   line  6.5: 0.669
+random_forest_regressor line  9.5: 0.604
+ridge                   line  9.5: 0.603
+ridge                   line  7.5: 0.571
+random_forest_regressor line  7.5: 0.566
+ridge                   line  8.5: 0.549
+random_forest_regressor line  8.5: 0.537
+```
+
+Readout:
+
+- Exact total prediction is still noisy: total MAE is roughly 3.3-3.6 runs.
+- Within 2 runs is roughly 34-36%; within 3 runs is roughly 49-51%.
+- Synthetic OU accuracy is higher on extreme lines like 6.5 and 10.5, but weak around common middle lines like 8.5.
+- Next modeling work should focus on improving predicted total dispersion/calibration around the middle market lines.
+
+### 0.1.44 Win-Probability Improvement Experiment: Expected Runs As Features
+
+- Ran a win-model improvement experiment that adds holdout-safe expected-run features to the win model.
+- Feature variant:
+  - baseline feature table
+  - baseline + OOF expected runs from ridge score model
+- Tested models:
+  - `random_forest`
+  - `random_forest_shallow`
+  - `logistic`
+  - `calibrated_logistic`
+  - `extra_trees`
+  - `hist_gradient_boosting`
+- Holdouts:
+  - 2022, 2023, 2024, 2025
+
+Command:
+
+```text
+.\.venv\Scripts\python.exe scripts\run_expected_runs_feature_experiment.py \
+  --features data\processed\features_confirmed_2021_2025_with_park_factors_statcast.csv \
+  --output-dir outputs\experiments\win_improvement_expected_runs_features_confirmed_2021_2025 \
+  --holdout-seasons 2022,2023,2024,2025 \
+  --models random_forest,random_forest_shallow,logistic,calibrated_logistic,extra_trees,hist_gradient_boosting \
+  --expected-runs-model ridge \
+  --prediction-mode confirmed_lineup
+```
+
+Outputs:
+
+```text
+outputs\experiments\win_improvement_expected_runs_features_confirmed_2021_2025\metrics_by_holdout.csv
+outputs\experiments\win_improvement_expected_runs_features_confirmed_2021_2025\metrics_vs_baseline.csv
+outputs\experiments\win_improvement_expected_runs_features_confirmed_2021_2025\summary_by_model.csv
+outputs\experiments\win_improvement_expected_runs_features_confirmed_2021_2025\summary.md
+outputs\experiments\win_improvement_expected_runs_features_confirmed_2021_2025\features_with_expected_runs_oof.csv
+```
+
+Average accuracy by feature set/model:
+
+```text
+baseline            random_forest          0.5673
+expected_runs_ridge random_forest_shallow  0.5661
+baseline            random_forest_shallow  0.5653
+baseline            logistic               0.5649
+expected_runs_ridge random_forest          0.5635
+expected_runs_ridge logistic               0.5633
+expected_runs_ridge calibrated_logistic    0.5613
+baseline            calibrated_logistic    0.5611
+expected_runs_ridge extra_trees            0.5602
+baseline            extra_trees            0.5590
+expected_runs_ridge hist_gradient_boosting 0.5546
+baseline            hist_gradient_boosting 0.5518
+```
+
+Expected-runs feature deltas vs the same model baseline:
+
+```text
+hist_gradient_boosting accuracy +0.0028, log_loss -0.0018
+extra_trees            accuracy +0.0012, log_loss -0.0005
+random_forest_shallow  accuracy +0.0008, log_loss -0.0009
+calibrated_logistic    accuracy +0.0002, log_loss +0.0019
+logistic               accuracy -0.0015, log_loss -0.0007
+random_forest          accuracy -0.0038, log_loss +0.0002
+```
+
+Readout:
+
+- The current overall win baseline remains `baseline + random_forest`.
+- Adding expected-run features does not improve the main `random_forest`; it slightly hurts average accuracy.
+- Expected-run features help some alternate models a little, especially `hist_gradient_boosting`, but those models still do not beat baseline RF on overall accuracy.
+- For selective higher-confidence betting-style use, `random_forest_shallow` and `extra_trees` remain worth testing as confidence-band challengers.
+
+Next recommended win-probability work:
+
+1. Add a dedicated confidence-band report across model candidates.
+2. Evaluate selective rules on recent completed games:
+   - overall picks
+   - confidence >= 55/60/65
+   - pass/lean/strong rule candidates
+3. Test recent-season weighting or 2024-2025-only training as a challenger to the full 2021-2025 baseline.
+
+### 0.1.45 Confidence Bands And Feature Reduction Diagnostics
+
+- Checked the recent completed-game smoke (`2026-05-19` to `2026-05-25`) by model confidence.
+- Recent-week `random_forest` final model:
+
+```text
+confidence >= 0.55: 11 games, 7/11 correct, accuracy 0.636
+confidence >= 0.58:  1 game,  1/1 correct, accuracy 1.000
+confidence >= 0.60:  0 games
+```
+
+- Historical season-holdout confidence bands show that 60%+ predictions do exist in backtests.
+- Baseline model average at `confidence >= 0.60`:
+
+```text
+extra_trees            accuracy_conf_60 0.678, coverage 0.071
+random_forest_shallow  accuracy_conf_60 0.672, coverage 0.131
+random_forest          accuracy_conf_60 0.651, coverage 0.186
+calibrated_logistic    accuracy_conf_60 0.615, coverage 0.176
+logistic               accuracy_conf_60 0.605, coverage 0.421
+hist_gradient_boosting accuracy_conf_60 0.600, coverage 0.413
+```
+
+- Ran feature redundancy diagnostics.
+- High-correlation outputs:
+
+```text
+outputs\experiments\win_feature_diagnostics_confirmed_2021_2025\top_correlation_pairs.csv
+outputs\experiments\win_feature_diagnostics_confirmed_2021_2025\high_correlation_pairs_095.csv
+outputs\experiments\win_feature_diagnostics_confirmed_2021_2025\feature_non_null_unique.csv
+```
+
+- Strong redundant pairs found:
+
+```text
+lineup_previous_starter_return_rate vs lineup_previous_starter_missing_count: 1.000
+lineup_platoon_advantage_ratio vs lineup_same_hand_ratio: ~0.997
+team_ops_season_to_date vs team_woba_season_to_date: ~0.996
+lineup_avg_ops vs lineup_avg_woba: ~0.992
+lineup_avg_woba vs lineup_weighted_woba_by_order: ~0.989
+lineup_avg_woba vs lineup_statcast_woba: ~0.984
+```
+
+- Ran feature group ablation:
+
+```text
+outputs\experiments\win_feature_group_ablation_confirmed_2021_2025\
+```
+
+- Built a reduced feature set that removes lineup optional signals and obvious redundant paired features:
+
+```text
+data\processed\model_experiments\features_confirmed_2021_2025_win_reduced_lineup_redundancy.csv
+original_cols: 176
+reduced_cols: 149
+dropped: 27
+```
+
+- Reduced feature model test:
+
+```text
+outputs\experiments\win_reduced_lineup_redundancy_model_test\
+```
+
+Reduced feature average results:
+
+```text
+random_forest         accuracy 0.5662, accuracy_conf_60 0.6529, coverage_conf_60 0.1845
+random_forest_shallow accuracy 0.5664, accuracy_conf_60 0.6688, coverage_conf_60 0.1308
+extra_trees           accuracy 0.5584, accuracy_conf_60 0.6751, coverage_conf_60 0.0715
+logistic              accuracy 0.5651, accuracy_conf_60 0.6082, coverage_conf_60 0.4098
+```
+
+Readout:
+
+- Removing redundant/optional lineup features did not materially improve overall accuracy over the existing full `random_forest`.
+- The reduced set is competitive and simpler, especially for `random_forest_shallow`.
+- For selective picks, `random_forest_shallow` is a better practical challenger than `extra_trees` because it keeps a useful 60%+ coverage while staying near 67% accuracy.
+- A reasonable next rule candidate is:
+  - main model: full or reduced `random_forest`
+  - selective strong model: reduced `random_forest_shallow` when confidence >= 0.60
+  - otherwise pass/lean instead of forcing every game
+
+### 0.1.46 Reduced Shallow Challenger Smoke On Recent Completed Games
+
+- Trained and saved the reduced-feature `random_forest_shallow` challenger.
+
+Command:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli fit-final-model \
+  --features data\processed\model_experiments\features_confirmed_2021_2025_win_reduced_lineup_redundancy.csv \
+  --prediction-mode confirmed_lineup \
+  --model-name random_forest_shallow \
+  --output-dir outputs\final_models\win_reduced_random_forest_shallow_confirmed_2021_2025
+```
+
+Result:
+
+```text
+training_rows=12148
+feature_count=135
+model_name=random_forest_shallow
+model: outputs\final_models\win_reduced_random_forest_shallow_confirmed_2021_2025\best_model.joblib
+```
+
+- Compared main full RF vs reduced shallow challenger on the recent completed-game smoke.
+- Output:
+
+```text
+outputs\mlb_recent_week_predictions_2026-05-19_2026-05-25\win_main_vs_reduced_shallow.csv
+```
+
+Recent-week result:
+
+```text
+rows: 95
+main full random_forest:        52 / 95 = 0.547
+reduced random_forest_shallow:  48 / 95 = 0.505
+main/challenger agree rows:     57 games, accuracy 0.544
+
+rule strong: 0 games
+rule lean: 6 games, 3 / 6 = 0.500
+rule lean_main_only: 6 games, 4 / 6 = 0.667
+pass: 83 games
+```
+
+Readout:
+
+- The reduced shallow challenger did not improve the recent-week smoke.
+- It also produced no `confidence >= 0.60` strong picks in this 95-game sample.
+- The historical holdout case for reduced/shallow remains interesting, but recent-week behavior says not to promote it yet.
+- The next step should be a more formal selective-pick report using out-of-fold predictions, not only aggregate holdout metrics.
+
+### 0.1.47 Boosting And Ensemble Win-Model Candidates
+
+- Clarified terminology:
+  - combining multiple model outputs into one prediction is an `ensemble`
+  - common ensemble forms are `voting`, `blending`, and `stacking`
+- Added model registry candidates:
+  - `soft_voting`
+    - logistic + random forest + shallow random forest + extra trees
+  - `booster_voting`
+    - hist gradient boosting + LightGBM + XGBoost + CatBoost shallow
+  - `booster_stacking`
+    - same booster base learners with logistic final estimator
+- Verified boosters are installed:
+
+```text
+catboost True
+lightgbm True
+xgboost True
+```
+
+- Ran full-feature model comparison:
+
+```text
+.\.venv\Scripts\python.exe scripts\run_model_test_experiment.py \
+  --features data\processed\features_confirmed_2021_2025_with_park_factors_statcast.csv \
+  --output-dir outputs\experiments\win_boosting_voting_full_confirmed_2021_2025 \
+  --holdout-seasons 2022,2023,2024,2025 \
+  --models random_forest,random_forest_shallow,extra_trees,hist_gradient_boosting,lightgbm,xgboost,catboost,catboost_shallow,catboost_l2,catboost_lr02,soft_voting,booster_voting,booster_stacking \
+  --prediction-mode confirmed_lineup
+```
+
+Outputs:
+
+```text
+outputs\experiments\win_boosting_voting_full_confirmed_2021_2025\metrics_by_holdout.csv
+outputs\experiments\win_boosting_voting_full_confirmed_2021_2025\mean_by_model.csv
+outputs\experiments\win_boosting_voting_full_confirmed_2021_2025\best_by_holdout.csv
+outputs\experiments\win_boosting_voting_full_confirmed_2021_2025\model_selection_rules.csv
+outputs\experiments\win_boosting_voting_full_confirmed_2021_2025\summary.md
+```
+
+Mean holdout results by accuracy:
+
+```text
+booster_stacking       accuracy 0.5680, log_loss 0.6811
+soft_voting            accuracy 0.5678, log_loss 0.6783
+random_forest          accuracy 0.5673, log_loss 0.6796
+random_forest_shallow  accuracy 0.5653, log_loss 0.6803
+catboost_lr02          accuracy 0.5648, log_loss 0.6808
+catboost_l2            accuracy 0.5633, log_loss 0.6816
+catboost               accuracy 0.5631, log_loss 0.6837
+catboost_shallow       accuracy 0.5630, log_loss 0.6801
+xgboost                accuracy 0.5625, log_loss 0.6939
+extra_trees            accuracy 0.5590, log_loss 0.6820
+booster_voting         accuracy 0.5558, log_loss 0.6883
+lightgbm               accuracy 0.5528, log_loss 0.7205
+hist_gradient_boosting accuracy 0.5518, log_loss 0.6926
+```
+
+Best overall log-loss by holdout:
+
+```text
+2022 soft_voting
+2023 soft_voting
+2024 catboost_lr02
+2025 soft_voting
+```
+
+Selection rule highlights:
+
+```text
+overall_log_loss: soft_voting wins 3/4 holdouts
+confidence_60:
+  2022 random_forest_shallow
+  2023 soft_voting
+  2024 soft_voting
+  2025 random_forest_shallow
+confidence_65:
+  mostly CatBoost variants
+```
+
+- Trained final soft voting candidate:
+
+```text
+outputs\final_models\win_soft_voting_confirmed_2021_2025_statcast\best_model.joblib
+training_rows=12148
+feature_count=162
+```
+
+- Recent-week smoke comparison:
+
+```text
+outputs\mlb_recent_week_predictions_2026-05-19_2026-05-25\win_model_ensemble_comparison.csv
+
+main_rf:         52 / 95 = 0.547, avg_conf 0.525
+soft_voting:     39 / 95 = 0.411, avg_conf 0.614
+reduced_shallow: 48 / 95 = 0.505, avg_conf 0.522
+
+soft voting strong rule: 41 games, 20 / 41 = 0.488
+```
+
+Readout:
+
+- Historical holdout strongly supports `soft_voting` as a probability-quality challenger.
+- Recent-week 2026 smoke strongly rejects promoting it immediately: it is overconfident and wrong on this sample.
+- The likely cause is feature distribution mismatch in the current 2026 smoke path, especially because 2026 season logs are not yet backfilled and the feature row uses 2025 logs for compatibility.
+- Keep production/final default as full `random_forest` until a 2026-ready feature pipeline is built or a larger true pre-game validation confirms soft voting.
+
+### 0.1.48 Recent-Week 2026 May 23 Failure Diagnostic
+
+- Investigated why 2026-05-23 was much worse than the rest of the recent completed-game smoke.
+- Corrected the scored-game denominator:
+  - schedule rows on 2026-05-23 included one game without a usable final score in the review table
+  - scored-game evaluation is therefore `3 / 15 = 0.200`, not `3 / 16 = 0.188`
+- Outputs:
+
+```text
+outputs\mlb_recent_week_predictions_2026-05-19_2026-05-25\may23_diagnostics\may23_scored_game_review.csv
+outputs\mlb_recent_week_predictions_2026-05-19_2026-05-25\may23_diagnostics\may23_scored_summary.csv
+outputs\mlb_recent_week_predictions_2026-05-19_2026-05-25\may23_diagnostics\may23_scored_actual_vs_pred_side.csv
+```
+
+Scored-game summary:
+
+```text
+scored_games:              15
+win_hits:                  3
+win_accuracy:              0.200
+actual home win rate:      0.533
+model home pick rate:      0.400
+avg home win probability:  0.493
+avg favorite confidence:   0.522
+total MAE:                 3.978
+runs OU accuracy at 8.5:   0.467
+direct OU accuracy at 8.5: 0.600
+```
+
+Winner-side confusion:
+
+```text
+actual away / predicted away: 2
+actual away / predicted home: 5
+actual home / predicted away: 7
+actual home / predicted home: 1
+```
+
+Readout:
+
+- This does not look like a simple home/away bias.
+- Actual winners were balanced, but the model flipped the side on most games.
+- The average favorite confidence was only `0.522`, so the model was mostly making forced low-edge picks.
+- The operational lesson is to avoid treating every game as a pick. A pass/lean/strong rule is now more important than marginally changing the base classifier.
+- The smoke still has a major caveat: 2026 rows are using compatibility features from prior-season logs, not a leakage-safe 2026 season-to-date feature pipeline.
+
+### 0.1.49 Win Pick Selection Rules
+
+- Added reusable win-pick rule helpers:
+  - `apply_win_pick_rules(...)`
+  - `summarize_win_pick_rules(...)`
+- Added CLI:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli win-pick-rule-report \
+  --predictions <prediction_csv> \
+  --output-dir <output_dir> \
+  --lean-threshold 0.55 \
+  --strong-threshold 0.60
+```
+
+- The rule converts home win probability into:
+  - `pass`: confidence below lean threshold
+  - `lean`: confidence >= lean threshold
+  - `strong`: confidence >= strong threshold
+- Output files:
+  - `win_pick_rules.csv`
+  - `win_pick_rule_summary.csv`
+  - `win_pick_rule_daily.csv`
+
+Recent completed-game smoke using the main RF prediction file:
+
+```text
+input: outputs\mlb_recent_week_predictions_2026-05-19_2026-05-25\combined_predictions_8_5.csv
+```
+
+Threshold comparison:
+
+```text
+53/55 rule: actionable 32 games, 19/32 = 0.594
+54/57 rule: actionable 20 games, 13/20 = 0.650
+55/60 rule: actionable 11 games,  7/11 = 0.636
+55/60 excluding 2026-05-23: actionable 9 games, 7/9 = 0.778
+```
+
+Readout:
+
+- The default production-style starting rule should be `lean >= 0.55`, `strong >= 0.60`.
+- The recent smoke has no `strong` picks at 60%+, but the 55%+ lean band is already better than forced picking.
+- The looser `54/57` rule is a useful comparison point because it increases coverage to 20 games while keeping 65% accuracy in this sample.
+- Next work should validate these thresholds on historical out-of-fold predictions, then add agreement rules with challenger models.
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe -m pytest --basetemp .pytest_tmp
+58 passed, 5 warnings
+```
+
+### 0.1.50 Historical OOF Selective-Pick Report
+
+- Added season-holdout out-of-fold win prediction generation:
+  - `run_oof_win_predictions(...)`
+  - CLI: `oof-selective-pick-report`
+- Added agreement-based pick helper:
+  - `apply_model_agreement_pick_rules(...)`
+  - primary model pick is actionable only when configured challenger models agree on side
+- Added test coverage for the agreement rule.
+
+Generated OOF reports:
+
+```text
+outputs\experiments\oof_selective_pick_main_challenger_confirmed_2021_2025\
+outputs\experiments\oof_selective_pick_main_challenger_confirmed_2021_2025_53_55\
+outputs\experiments\oof_selective_pick_main_challenger_confirmed_2021_2025_54_57\
+```
+
+Command shape:
+
+```text
+.\.venv\Scripts\python.exe -m mlb_winprob.cli oof-selective-pick-report \
+  --features data\processed\features_confirmed_2021_2025_with_park_factors_statcast.csv \
+  --output-dir outputs\experiments\oof_selective_pick_main_challenger_confirmed_2021_2025 \
+  --holdout-seasons 2022,2023,2024,2025 \
+  --models random_forest,random_forest_shallow,soft_voting \
+  --primary-model random_forest \
+  --challenger-models random_forest_shallow,soft_voting \
+  --prediction-mode confirmed_lineup \
+  --lean-threshold 0.55 \
+  --strong-threshold 0.60
+```
+
+OOF threshold comparison, agreement rule:
+
+```text
+53/55: 6287 picks, 3707 hits, accuracy 0.590, coverage 0.647
+54/57: 5558 picks, 3294 hits, accuracy 0.593, coverage 0.572
+55/60: 4789 picks, 2893 hits, accuracy 0.604, coverage 0.493
+```
+
+OOF `55/60` comparison:
+
+```text
+random_forest:         4865 picks, 2937 hits, accuracy 0.604, coverage 0.501
+random_forest_shallow: 4276 picks, 2607 hits, accuracy 0.610, coverage 0.440
+soft_voting:           4874 picks, 2977 hits, accuracy 0.611, coverage 0.501
+agreement:             4789 picks, 2893 hits, accuracy 0.604, coverage 0.493
+```
+
+Agreement `55/60` by holdout:
+
+```text
+2022: 1237 picks, 756 hits, accuracy 0.611, coverage 0.509
+2023: 1218 picks, 710 hits, accuracy 0.583, coverage 0.501
+2024: 1132 picks, 701 hits, accuracy 0.619, coverage 0.466
+2025: 1202 picks, 726 hits, accuracy 0.604, coverage 0.495
+```
+
+Readout:
+
+- Historical OOF supports keeping the stricter `55/60` rule as the default candidate.
+- Lower thresholds increase coverage but give back accuracy.
+- Simple main/challenger side agreement does not materially beat the strongest individual challenger on OOF.
+- `soft_voting` remains attractive historically, but the prior 2026 recent-week smoke still blocks production promotion until the 2026 season-to-date feature path is fixed.
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe -m pytest tests\test_evaluation.py tests\test_models.py --basetemp .pytest_tmp
+10 passed, 5 warnings
+```
+
+### 0.1.51 Scored-Only Daily Win-Pick Breakdown
+
+- Hardened `apply_win_pick_rules(...)` so rows without `actual_winner` are not counted as misses.
+- Added scored-row filtering for win-pick reports:
+  - score columns are preferred when `home_score` / `away_score` exist
+  - `actual_winner` is used as a fallback only when scores are unavailable
+- Added `win-pick-rule-report --scored-only`.
+- Updated daily output to report:
+  - `scored_games`
+  - `pass_games`
+  - `lean_games`
+  - `strong_games`
+  - `picks`
+  - `hits`
+  - `accuracy`
+  - `coverage`
+  - `avg_confidence`
+
+Generated recent-week scored-only report:
+
+```text
+outputs\mlb_recent_week_predictions_2026-05-19_2026-05-25\win_pick_rules_55_60_scored_daily\
+```
+
+Scored-only summary for `55/60`:
+
+```text
+pass:       82 games
+lean:       11 games, 7 / 11 = 0.636
+strong:      0 games
+actionable: 11 games, 7 / 11 = 0.636
+```
+
+Daily scored breakdown:
+
+```text
+2026-05-19: scored 10, picks 0
+2026-05-20: scored 18, picks 5, 4 / 5 = 0.800
+2026-05-21: scored  7, picks 2, 1 / 2 = 0.500
+2026-05-22: scored 12, picks 1, 1 / 1 = 1.000
+2026-05-23: scored 15, picks 2, 0 / 2 = 0.000
+2026-05-24: scored 18, picks 0
+2026-05-25: scored 11, picks 1, 1 / 1 = 1.000
+2026-05-26: scored  2, picks 0
+```
+
+Readout:
+
+- The daily report now excludes rows without final scores from its denominator.
+- The 2026-05-23 denominator is correctly `15` scored games in this report.
+- Overall scored-game denominator is now `93` games for this file, with 11 actionable lean picks.
+
+Verification:
+
+```text
+.\.venv\Scripts\python.exe -m pytest --basetemp .pytest_tmp
+60 passed, 5 warnings
+```
+
+## 2026-05-27 2026 Season-to-Date Feature Pipeline
+
+### 0.1.52 Leakage-Safe 2026 Season-to-Date Features
+
+- Built the missing 2026 season-to-date feature pipeline that was blocking ensemble-model promotion.
+- Root problem fixed: the earlier 2026 recent-week smoke fed prior-season (2025) batting/pitcher logs into the feature builder, so every season-to-date feature was computed from 2025 data, not real 2026 in-season games.
+- Added `scripts/build_season_to_date_features.py`:
+  - Accepts an explicit standardized snapshot directory (e.g. `data/season_to_date/mlb_stats_api_2026_to_2026-05-26/standardized`) instead of the full-season `data/standardized/mlb_stats_api_<season>` convention.
+  - Uses the in-season logs directly, so rolling/season-to-date features stay leakage-safe (each game still excludes itself).
+  - Optionally aggregates and merges a snapshot Statcast CSV; aligns output columns to the training schema.
+  - Normalizes all id columns (`game_id`, `player_id`, `home_sp_id`, `away_sp_id`) to a canonical string to avoid str/int64 merge errors when snapshot CSVs are numeric-only.
+- Collected 2026 Statcast events through the snapshot date.
+
+```text
+data/raw/statcast/statcast_2026.csv  237836 rows  (2026-03-26 .. 2026-05-25)
+```
+
+- Built the 2026 season-to-date, Statcast-enriched, park-factor feature table.
+
+```text
+data/processed/features_confirmed_2026_to_2026-05-26_with_park_factors_statcast.csv
+rows: 807  (2026-03-26 .. 2026-05-26)
+outputs/quality/features_confirmed_2026_to_2026-05-26_with_park_factors_statcast/
+```
+
+- Feature quality now matches the historical MLB confirmed-lineup baseline (May-onward null rates):
+
+```text
+home/away_lineup_statcast_xwoba      0.000
+home_sp_statcast_xwoba_allowed       0.068
+home_sp_avg_fastball_velocity        0.068
+home_sp_fip_season_to_date           ~0.068
+```
+
+- Regenerated recent-week predictions with the production model bundles on the leakage-safe table.
+
+```text
+outputs/mlb_2026_season_to_date_predictions/main_rf_predictions_8_5.csv
+outputs/mlb_2026_season_to_date_predictions/soft_voting_predictions_8_5.csv
+outputs/mlb_2026_season_to_date_predictions/season_to_date_vs_smoke_summary.csv
+```
+
+- Recent-week (2026-05-19 .. 2026-05-25) comparison, old 2025-fallback smoke vs new season-to-date:
+
+```text
+main_rf      old: acc 0.547 conf 0.525   new: acc 0.531 conf 0.551
+soft_voting  old: acc 0.411 conf 0.614   new: acc 0.521 conf 0.545
+```
+
+- Readout:
+  - The soft_voting overconfidence/failure on the 2026 smoke was a feature-distribution artifact, not a model defect. With real 2026 season-to-date features its confidence normalizes (0.614 -> 0.545) and accuracy recovers (0.411 -> 0.521), tracking main_rf closely.
+  - Full-season-to-date 2026 accuracy is modest for both models (main_rf 0.517, soft_voting 0.519 over 807 scored games), so pass/lean/strong pick rules remain the primary lever.
+  - This unblocks fair ensemble evaluation; promotion still warrants a larger true pre-game validation before changing the production default.
+
+### 0.1.53 Recent-Season Training Challenger
+
+- Added `scripts/run_recent_season_challenger.py` to test whether recent-only or recency-weighted training beats equal-weighted all-season training, now that the 2026 season-to-date table exists.
+- Trains three Random Forest variants on a shared feature set (162 columns) and scores them on 2026 season-to-date scored games, plus a 2025 holdout sanity check.
+
+```text
+outputs/experiments/recent_season_challenger_2026/challenger_metrics.csv
+outputs/experiments/recent_season_challenger_2026/summary.md
+```
+
+- 2026 target (807 scored games):
+
+```text
+baseline_rf_all_seasons   log_loss 0.6944  accuracy 0.5167  acc_conf_60 0.5586
+challenger_rf_2024_2025    log_loss 0.6939  accuracy 0.5390  acc_conf_60 0.5155
+recency_weighted_rf_hl2    log_loss 0.6933  accuracy 0.5180  acc_conf_60 0.5895
+```
+
+- 2025 holdout (2430 games):
+
+```text
+baseline_rf_all_seasons   log_loss 0.6797  accuracy 0.5584
+challenger_rf_2024         log_loss 0.6829  accuracy 0.5527
+recency_weighted_rf_hl2    log_loss 0.6813  accuracy 0.5539
+```
+
+- Decision: keep `baseline + random_forest` (all 2021-2025, equal weight) as default. Recent-only / recency-weighted show a small edge on the partial 2026 sample but lose on the robust 2025 holdout, and 2026 log_loss is near coin-flip (~0.693). Not a robust improvement; revisit with a larger 2026 sample. Logged in `MODEL_IMPROVEMENT_LOG.md` (2026-05-27).
+
+### 0.1.54 CatBoost Season-Dependent Selection Rule Check
+
+- Verified with multi-seed runs whether CatBoost's earlier per-season wins (2022/2024/2025) generalize, using `scripts/run_multiseed_model_experiment.py` (5 seeds × 4 holdouts, models `random_forest,catboost,catboost_lr02`).
+
+```text
+outputs/experiments/catboost_season_rule_multiseed_2021_2025/summary_by_variant_model.csv
+outputs/experiments/catboost_season_rule_multiseed_2021_2025/per_season_winrate_vs_rf.csv
+```
+
+- Overall mean (across seasons/seeds):
+
+```text
+random_forest  log_loss 0.6795  accuracy 0.5651
+catboost_lr02  log_loss 0.6807  accuracy 0.5668
+catboost       log_loss 0.6839  accuracy 0.5612
+```
+
+- Per-season CatBoost log_loss win-rate vs RF (across 5 seeds):
+
+```text
+2022  catboost 0%   catboost_lr02 0%
+2023  catboost 0%   catboost_lr02 20%
+2024  catboost 40%  catboost_lr02 100%
+2025  catboost 0%   catboost_lr02 20%
+```
+
+- Decision: do NOT adopt a season-dependent CatBoost switch. Only 2024 is a stable CatBoost win and its margin is negligible (catboost_lr02 0.6785 vs RF 0.6792, delta -0.00072). The earlier single-seed "best in 2022/2024/2025" pattern was mostly seed luck. Keep `random_forest` as the single default; `catboost_lr02` stays watchlist-only. Logged in `MODEL_IMPROVEMENT_LOG.md` (2026-05-27).

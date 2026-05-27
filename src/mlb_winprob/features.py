@@ -80,6 +80,22 @@ PITCHING_STATCAST_SUMS = [
 
 WEATHER_COLUMNS = ["temperature", "wind_speed", "wind_direction", "humidity", "is_dome"]
 PARK_FACTOR_COLUMNS = ["park_factor_run", "park_factor_hr"]
+MARKET_LINE_COLUMNS = [
+    "opening_total_line",
+    "current_total_line",
+    "closing_total_line",
+    "over_odds",
+    "under_odds",
+    "opening_home_moneyline",
+    "opening_away_moneyline",
+    "current_home_moneyline",
+    "current_away_moneyline",
+    "home_sp_id_at_open",
+    "away_sp_id_at_open",
+    "home_sp_changed",
+    "away_sp_changed",
+    "starter_change_count",
+]
 
 
 def _safe_divide(numerator: pd.Series | np.ndarray, denominator: pd.Series | np.ndarray) -> np.ndarray:
@@ -113,6 +129,16 @@ def _ensure_numeric_columns(frame: pd.DataFrame, columns: Iterable[str]) -> pd.D
             out[column] = 0.0
         out[column] = pd.to_numeric(out[column], errors="coerce").fillna(0.0)
     return out
+
+
+def _american_implied_probability(values: pd.Series) -> pd.Series:
+    odds = pd.to_numeric(values, errors="coerce")
+    positive = odds > 0
+    negative = odds < 0
+    probability = pd.Series(np.nan, index=odds.index, dtype=float)
+    probability.loc[positive] = 100.0 / (odds.loc[positive] + 100.0)
+    probability.loc[negative] = odds.loc[negative].abs() / (odds.loc[negative].abs() + 100.0)
+    return probability
 
 
 def _batting_rates_from_columns(frame: pd.DataFrame, suffix: str = "") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -230,6 +256,7 @@ class FeatureBuilder:
         weather: pd.DataFrame | None = None,
         park_factors: pd.DataFrame | None = None,
         venues: pd.DataFrame | None = None,
+        market_lines: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         games = _with_datetime(games)
         games = self._merge_venue_metadata(games, venues)
@@ -289,6 +316,7 @@ class FeatureBuilder:
         features = self._merge_home_away_team_features(features, bullpen_features, feature_prefix="bullpen_")
 
         features = self._merge_park_weather_features(features, weather=weather, park_factors=park_factors)
+        features = self._merge_market_line_features(features, market_lines=market_lines)
         features = self._add_diff_features(features)
         features = features.sort_values(["game_date", "game_id"]).reset_index(drop=True)
         return features
@@ -431,10 +459,15 @@ class FeatureBuilder:
             if out.empty:
                 return self._empty_lineup_features()
 
-        if "game_date" not in out.columns or "season" not in out.columns:
-            out = out.merge(games[["game_id", "game_date", "season"]], on="game_id", how="left")
+        missing_game_columns = [column for column in ["game_date", "season"] if column not in out.columns]
+        if missing_game_columns:
+            out = out.merge(games[["game_id", *missing_game_columns]], on="game_id", how="left")
         out = _with_datetime(out)
         out["batting_order"] = pd.to_numeric(out["batting_order"], errors="coerce")
+        if pd.api.types.is_numeric_dtype(batter_profiles["player_id"]):
+            out["player_id"] = pd.to_numeric(out["player_id"], errors="coerce")
+        else:
+            out["player_id"] = out["player_id"].astype(str)
         if "bats" not in out.columns:
             out["bats"] = np.nan
         out["bats"] = out["bats"].astype(str).str.upper().str[0]
@@ -625,6 +658,14 @@ class FeatureBuilder:
         candidates = filled.loc[missing, ["player_id", "game_date"]].copy()
         candidates["_row_index"] = candidates.index
         history = batter_profiles[["player_id", "game_date", "game_id", *profile_columns]].copy()
+        if pd.api.types.is_numeric_dtype(history["player_id"]):
+            candidates["player_id"] = pd.to_numeric(candidates["player_id"], errors="coerce").astype(float)
+            history["player_id"] = pd.to_numeric(history["player_id"], errors="coerce").astype(float)
+            candidates = candidates.dropna(subset=["player_id"])
+            history = history.dropna(subset=["player_id"])
+        else:
+            candidates["player_id"] = candidates["player_id"].astype(str)
+            history["player_id"] = history["player_id"].astype(str)
         history = history.sort_values(["player_id", "game_date", "game_id"])
 
         pieces = []
@@ -1094,6 +1135,103 @@ class FeatureBuilder:
 
         out["home_field_advantage"] = self.config.home_field_advantage
         return out
+
+    def _merge_market_line_features(
+        self,
+        features: pd.DataFrame,
+        *,
+        market_lines: pd.DataFrame | None,
+    ) -> pd.DataFrame:
+        out = features.copy()
+        if market_lines is None:
+            for column in [
+                "market_opening_total_line",
+                "market_current_total_line",
+                "market_total_line",
+                "market_closing_total_line",
+                "market_total_line_movement",
+                "market_over_odds",
+                "market_under_odds",
+                "market_over_implied_prob",
+                "market_under_implied_prob",
+                "market_ou_vig",
+                "market_opening_home_moneyline",
+                "market_opening_away_moneyline",
+                "market_current_home_moneyline",
+                "market_current_away_moneyline",
+                "market_home_moneyline_movement",
+                "market_away_moneyline_movement",
+                "market_home_sp_changed",
+                "market_away_sp_changed",
+                "market_starter_change_count",
+            ]:
+                out[column] = np.nan
+            return out
+
+        _require_columns(market_lines, ["game_id"], "market_lines")
+        lines = market_lines.copy()
+        lines["game_id"] = lines["game_id"].astype(str)
+        out["game_id"] = out["game_id"].astype(str)
+        for column in MARKET_LINE_COLUMNS:
+            if column not in lines.columns:
+                lines[column] = np.nan
+        numeric_columns = [
+            "opening_total_line",
+            "current_total_line",
+            "closing_total_line",
+            "over_odds",
+            "under_odds",
+            "opening_home_moneyline",
+            "opening_away_moneyline",
+            "current_home_moneyline",
+            "current_away_moneyline",
+            "home_sp_changed",
+            "away_sp_changed",
+            "starter_change_count",
+        ]
+        for column in numeric_columns:
+            lines[column] = pd.to_numeric(lines[column], errors="coerce")
+
+        lines = lines.drop_duplicates("game_id", keep="last")
+        lines["market_opening_total_line"] = lines["opening_total_line"]
+        lines["market_current_total_line"] = lines["current_total_line"]
+        lines["market_total_line"] = lines["current_total_line"].fillna(lines["opening_total_line"])
+        lines["market_closing_total_line"] = lines["closing_total_line"]
+        lines["market_total_line_movement"] = lines["current_total_line"] - lines["opening_total_line"]
+        lines["market_over_odds"] = lines["over_odds"]
+        lines["market_under_odds"] = lines["under_odds"]
+        lines["market_over_implied_prob"] = _american_implied_probability(lines["over_odds"])
+        lines["market_under_implied_prob"] = _american_implied_probability(lines["under_odds"])
+        lines["market_ou_vig"] = lines["market_over_implied_prob"] + lines["market_under_implied_prob"] - 1.0
+        lines["market_opening_home_moneyline"] = lines["opening_home_moneyline"]
+        lines["market_opening_away_moneyline"] = lines["opening_away_moneyline"]
+        lines["market_current_home_moneyline"] = lines["current_home_moneyline"]
+        lines["market_current_away_moneyline"] = lines["current_away_moneyline"]
+        lines["market_home_moneyline_movement"] = lines["current_home_moneyline"] - lines["opening_home_moneyline"]
+        lines["market_away_moneyline_movement"] = lines["current_away_moneyline"] - lines["opening_away_moneyline"]
+
+        home_changed = lines["home_sp_changed"]
+        away_changed = lines["away_sp_changed"]
+        if "home_sp_id_at_open" in lines.columns:
+            current_home_sp = out.set_index("game_id").reindex(lines["game_id"])["home_sp_id"].reset_index(drop=True)
+            home_open = lines["home_sp_id_at_open"].reset_index(drop=True)
+            inferred_home_changed = home_open.notna() & current_home_sp.astype(str).ne(home_open.astype(str))
+            inferred_home_changed.index = lines.index
+            home_changed = home_changed.fillna(inferred_home_changed.astype(float))
+        if "away_sp_id_at_open" in lines.columns:
+            current_away_sp = out.set_index("game_id").reindex(lines["game_id"])["away_sp_id"].reset_index(drop=True)
+            away_open = lines["away_sp_id_at_open"].reset_index(drop=True)
+            inferred_away_changed = away_open.notna() & current_away_sp.astype(str).ne(away_open.astype(str))
+            inferred_away_changed.index = lines.index
+            away_changed = away_changed.fillna(inferred_away_changed.astype(float))
+        lines["market_home_sp_changed"] = pd.to_numeric(home_changed, errors="coerce")
+        lines["market_away_sp_changed"] = pd.to_numeric(away_changed, errors="coerce")
+        lines["market_starter_change_count"] = lines["starter_change_count"].fillna(
+            lines["market_home_sp_changed"].fillna(0.0) + lines["market_away_sp_changed"].fillna(0.0)
+        )
+
+        market_columns = [column for column in lines.columns if column.startswith("market_")]
+        return out.merge(lines[["game_id", *market_columns]], on="game_id", how="left")
 
     def _add_diff_features(self, features: pd.DataFrame) -> pd.DataFrame:
         out = features.copy()

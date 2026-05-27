@@ -12,10 +12,13 @@ NON_FEATURE_COLUMNS = {
     "away_team",
     "home_score",
     "away_score",
+    "actual_total",
     "home_sp_id",
     "away_sp_id",
     "venue_id",
     "prediction_mode",
+    "market_closing_total_line",
+    "market_total_over",
     TARGET_COLUMN,
 }
 

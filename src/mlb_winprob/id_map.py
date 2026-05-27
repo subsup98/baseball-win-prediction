@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pandas as pd
 
@@ -88,6 +89,101 @@ def build_id_map(chadwick_people: pd.DataFrame, mlb_people: pd.DataFrame | None 
         if column not in out.columns:
             out[column] = pd.NA
     return out[ID_MAP_COLUMNS].sort_values(["mlb_played_last", "name_last", "name_first"], ascending=[False, True, True]).reset_index(drop=True)
+
+
+def _normalize_name(value: object) -> str:
+    text = "" if pd.isna(value) else str(value).lower()
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    text = re.sub(r"\b(jr|sr|ii|iii|iv|v)\b", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _date_key(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series, errors="coerce", utc=True).dt.date.astype("string")
+
+
+def build_external_player_id_map(
+    provider_lineups: pd.DataFrame,
+    id_map: pd.DataFrame,
+    *,
+    season: int | None = None,
+) -> pd.DataFrame:
+    """Map provider player IDs to MLBAM IDs using normalized player names."""
+
+    required = {"external_player_id", "player_name"}
+    missing = required - set(provider_lineups.columns)
+    if missing:
+        raise ValueError(f"provider_lineups is missing columns: {sorted(missing)}")
+    if "mlbam_id" not in id_map.columns:
+        raise ValueError("id_map must contain mlbam_id")
+
+    provider = provider_lineups[["external_player_id", "player_name"]].dropna().drop_duplicates().copy()
+    provider["name_key"] = provider["player_name"].map(_normalize_name)
+
+    candidates = id_map.copy()
+    if season is not None and {"mlb_played_first", "mlb_played_last"}.issubset(candidates.columns):
+        first = pd.to_numeric(candidates["mlb_played_first"], errors="coerce")
+        last = pd.to_numeric(candidates["mlb_played_last"], errors="coerce")
+        candidates = candidates[(first.isna() | (first <= season)) & (last.isna() | (last >= season))].copy()
+
+    name_given = candidates.get("name_given", pd.Series(index=candidates.index, dtype=object))
+    first_last = (
+        candidates.get("name_first", pd.Series(index=candidates.index, dtype=object)).fillna("").astype(str)
+        + " "
+        + candidates.get("name_last", pd.Series(index=candidates.index, dtype=object)).fillna("").astype(str)
+    )
+    candidate_names = pd.concat(
+        [
+            pd.DataFrame({"mlbam_id": candidates["mlbam_id"], "matched_name": name_given}),
+            pd.DataFrame({"mlbam_id": candidates["mlbam_id"], "matched_name": first_last}),
+        ],
+        ignore_index=True,
+    )
+    candidate_names["name_key"] = candidate_names["matched_name"].map(_normalize_name)
+    candidate_names = candidate_names.dropna(subset=["mlbam_id"])
+    candidate_names = candidate_names[candidate_names["name_key"] != ""].drop_duplicates()
+
+    merged = provider.merge(candidate_names, on="name_key", how="left")
+    match_counts = merged.groupby("external_player_id")["mlbam_id"].nunique(dropna=True).rename("match_count")
+    merged = merged.merge(match_counts, on="external_player_id", how="left")
+    out = merged[merged["match_count"].eq(1)].copy()
+    out = out[["external_player_id", "mlbam_id", "player_name", "matched_name"]].drop_duplicates("external_player_id")
+    out = out.rename(columns={"mlbam_id": "player_id"})
+    return out.sort_values("external_player_id").reset_index(drop=True)
+
+
+def build_external_game_id_map(provider_lineups: pd.DataFrame, mlb_games: pd.DataFrame) -> pd.DataFrame:
+    """Map provider game IDs to MLBAM game IDs by date and team matchup."""
+
+    required_provider = {"external_game_id", "game_date", "home_team", "away_team"}
+    missing_provider = required_provider - set(provider_lineups.columns)
+    if missing_provider:
+        raise ValueError(f"provider_lineups is missing columns: {sorted(missing_provider)}")
+    required_games = {"game_id", "game_date", "home_team", "away_team"}
+    missing_games = required_games - set(mlb_games.columns)
+    if missing_games:
+        raise ValueError(f"mlb_games is missing columns: {sorted(missing_games)}")
+
+    provider = provider_lineups[list(required_provider)].dropna().drop_duplicates().copy()
+    provider["date_key"] = _date_key(provider["game_date"])
+    provider["home_key"] = provider["home_team"].astype(str).str.upper()
+    provider["away_key"] = provider["away_team"].astype(str).str.upper()
+
+    games = mlb_games[list(required_games)].dropna().drop_duplicates().copy()
+    games["date_key"] = _date_key(games["game_date"])
+    games["home_key"] = games["home_team"].astype(str).str.upper()
+    games["away_key"] = games["away_team"].astype(str).str.upper()
+
+    merged = provider.merge(
+        games[["game_id", "date_key", "home_key", "away_key"]],
+        on=["date_key", "home_key", "away_key"],
+        how="left",
+    )
+    match_counts = merged.groupby("external_game_id")["game_id"].nunique(dropna=True).rename("match_count")
+    merged = merged.merge(match_counts, on="external_game_id", how="left")
+    out = merged[merged["match_count"].eq(1)].copy()
+    out = out[["external_game_id", "game_id", "game_date", "home_team", "away_team"]].drop_duplicates("external_game_id")
+    return out.sort_values("external_game_id").reset_index(drop=True)
 
 
 def read_mlb_people_tables(paths: list[str | Path]) -> pd.DataFrame:

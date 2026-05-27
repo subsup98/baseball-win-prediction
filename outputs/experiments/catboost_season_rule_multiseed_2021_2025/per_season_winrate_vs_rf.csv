@@ -1,0 +1,9 @@
+holdout_season,model,mean_log_loss,rf_mean_log_loss,log_loss_win_rate_vs_rf,mean_logloss_delta_vs_rf
+2022,catboost,0.6863,0.6773,0.0,0.00898
+2022,catboost_lr02,0.6797,0.6773,0.0,0.00237
+2023,catboost,0.6884,0.6817,0.0,0.00674
+2023,catboost_lr02,0.684,0.6817,0.2,0.00232
+2024,catboost,0.6791,0.6792,0.4,-4e-05
+2024,catboost_lr02,0.6785,0.6792,1.0,-0.00072
+2025,catboost,0.6818,0.68,0.0,0.00176
+2025,catboost_lr02,0.6805,0.68,0.2,0.00052
