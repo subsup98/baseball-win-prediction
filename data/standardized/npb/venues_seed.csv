@@ -1,0 +1,12 @@
+venue_id,venue_name,latitude,longitude,timezone_offset,is_dome,source
+npb_belluna_dome,Belluna Dome,35.7685,139.4205,9,1,manual_seed_public_stadium_metadata
+npb_es_con_field_hokkaido,Es Con Field Hokkaido,42.9918,141.5495,9,0,manual_seed_public_stadium_metadata
+npb_kyocera_dome_osaka,Kyocera Dome Osaka,34.6693,135.4760,9,1,manual_seed_public_stadium_metadata
+npb_mazda_zoom_zoom_stadium_hiroshima,MAZDA Zoom-Zoom Stadium Hiroshima,34.3916,132.4845,9,0,manual_seed_public_stadium_metadata
+npb_meiji_jingu_stadium,Meiji Jingu Stadium,35.6745,139.7167,9,0,manual_seed_public_stadium_metadata
+npb_mizuho_paypay_dome_fukuoka,Mizuho PayPay Dome Fukuoka,33.5954,130.3622,9,1,manual_seed_public_stadium_metadata
+npb_rakuten_mobile_park_miyagi,Rakuten Mobile Park Miyagi,38.2566,140.9024,9,0,manual_seed_public_stadium_metadata
+npb_tokyo_dome,Tokyo Dome,35.7056,139.7519,9,1,manual_seed_public_stadium_metadata
+npb_vantelin_dome_nagoya,Vantelin Dome Nagoya,35.1859,136.9477,9,1,manual_seed_public_stadium_metadata
+npb_yokohama_stadium,Yokohama Stadium,35.4433,139.6401,9,0,manual_seed_public_stadium_metadata
+npb_zozo_marine_stadium,ZOZO Marine Stadium,35.6454,140.0308,9,0,manual_seed_public_stadium_metadata

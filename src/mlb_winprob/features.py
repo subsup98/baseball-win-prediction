@@ -26,6 +26,7 @@ BATTING_STATS = [
     "sacrifice_flies",
     "total_bases",
     "plate_appearances",
+    "strikeouts",
 ]
 
 PITCHING_STATS = [
@@ -37,6 +38,7 @@ PITCHING_STATS = [
     "strikeouts",
     "batters_faced",
     "pitches",
+    "earned_runs",
 ]
 
 BATTING_STATCAST_SUMS = [
@@ -164,6 +166,21 @@ def _batting_rates_from_columns(frame: pd.DataFrame, suffix: str = "") -> tuple[
     return ops, woba, iso
 
 
+def _batting_public_rates_from_columns(frame: pd.DataFrame, suffix: str = "") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    at_bats = frame[f"at_bats{suffix}"]
+    hits = frame[f"hits{suffix}"]
+    home_runs = frame[f"home_runs{suffix}"]
+    walks = frame[f"walks{suffix}"]
+    strikeouts = frame[f"strikeouts{suffix}"]
+    sacrifice_flies = frame[f"sacrifice_flies{suffix}"]
+    plate_appearances = frame[f"plate_appearances{suffix}"]
+    balls_in_play = at_bats - strikeouts - home_runs + sacrifice_flies
+    babip = _safe_divide(hits - home_runs, balls_in_play)
+    bb_rate = _safe_divide(walks, plate_appearances)
+    k_rate = _safe_divide(strikeouts, plate_appearances)
+    return babip, bb_rate, k_rate
+
+
 def _pitching_fip(
     innings: pd.Series,
     home_runs: pd.Series,
@@ -173,6 +190,15 @@ def _pitching_fip(
     fip_constant: float,
 ) -> np.ndarray:
     return _safe_divide(13 * home_runs + 3 * (walks + hit_by_pitch) - 2 * strikeouts, innings) + fip_constant
+
+
+def _estimate_batters_faced(frame: pd.DataFrame) -> pd.Series:
+    return (
+        pd.to_numeric(frame["innings_pitched"], errors="coerce").fillna(0.0) * 3.0
+        + pd.to_numeric(frame["hits"], errors="coerce").fillna(0.0)
+        + pd.to_numeric(frame["walks"], errors="coerce").fillna(0.0)
+        + pd.to_numeric(frame["hit_by_pitch"], errors="coerce").fillna(0.0)
+    )
 
 
 def _team_game_rows(games: pd.DataFrame) -> pd.DataFrame:
@@ -220,6 +246,34 @@ def _rolling_sum_before_dates(group: pd.DataFrame, value_column: str, days: int)
         mask = (dates >= start) & (dates < current_date)
         values.append(float(raw.loc[mask].sum()))
     return pd.Series(values, index=group.index)
+
+
+def _weighted_recent_before_current(
+    values: pd.Series,
+    *,
+    window: int,
+    decay: float = 0.85,
+) -> pd.Series:
+    raw = pd.to_numeric(values, errors="coerce").reset_index(drop=True)
+    output: list[float] = []
+    for index in range(len(raw)):
+        prior = raw.iloc[max(0, index - window) : index].dropna().to_numpy(dtype=float)
+        if len(prior) == 0:
+            output.append(np.nan)
+            continue
+        weights = decay ** np.arange(len(prior) - 1, -1, -1, dtype=float)
+        output.append(float(np.average(prior, weights=weights)))
+    return pd.Series(output, index=values.index)
+
+
+def _rolling_rate_before_current(values: pd.Series, *, window: int) -> pd.Series:
+    values_series = pd.Series(values)
+    raw = pd.to_numeric(values_series, errors="coerce").reset_index(drop=True)
+    output: list[float] = []
+    for index in range(len(raw)):
+        prior = raw.iloc[max(0, index - window) : index].dropna()
+        output.append(float(prior.mean()) if len(prior) else np.nan)
+    return pd.Series(output, index=values_series.index)
 
 
 def _haversine_miles(
@@ -330,7 +384,7 @@ class FeatureBuilder:
         if "timezone_offset" in venues.columns:
             venue_columns.append("timezone_offset")
         venue_lookup = venues[venue_columns].copy()
-        venue_lookup["venue_id"] = pd.to_numeric(venue_lookup["venue_id"], errors="coerce")
+        venue_lookup["venue_id"] = venue_lookup["venue_id"].astype("string")
         venue_lookup = venue_lookup.dropna(subset=["venue_id"]).drop_duplicates("venue_id", keep="last")
         venue_lookup = venue_lookup.rename(
             columns={
@@ -339,7 +393,7 @@ class FeatureBuilder:
                 "timezone_offset": "venue_timezone_offset",
             }
         )
-        out["venue_id"] = pd.to_numeric(out["venue_id"], errors="coerce")
+        out["venue_id"] = out["venue_id"].astype("string")
         out = out.merge(venue_lookup, on="venue_id", how="left", suffixes=("", "_from_venues"))
         for column in ["venue_latitude", "venue_longitude", "venue_timezone_offset"]:
             fallback = f"{column}_from_venues"
@@ -371,9 +425,18 @@ class FeatureBuilder:
             out[f"{column}_prior"] = out.groupby(group_keys, sort=False)[column].cumsum() - out[column]
 
         ops, woba, iso = _batting_rates_from_columns(out, suffix="_prior")
+        babip, bb_rate, k_rate = _batting_public_rates_from_columns(out, suffix="_prior")
         out["batter_ops_season_to_date"] = ops
         out["batter_woba_season_to_date"] = woba
         out["batter_iso_season_to_date"] = iso
+        out["batter_babip_season_to_date"] = babip
+        out["batter_bb_rate_season_to_date"] = bb_rate
+        out["batter_k_rate_season_to_date"] = k_rate
+        out["batter_xwoba_proxy"] = out["batter_woba_season_to_date"]
+        out["batter_hard_contact_proxy"] = (
+            out["batter_iso_season_to_date"].fillna(0.0)
+            + 0.5 * out["batter_babip_season_to_date"].fillna(0.0)
+        )
         statcast_columns = [column for column in BATTING_STATCAST_SUMS if column in out.columns]
         for column in statcast_columns:
             out[column] = pd.to_numeric(out[column], errors="coerce").fillna(0.0)
@@ -430,6 +493,11 @@ class FeatureBuilder:
                 "batter_ops_season_to_date",
                 "batter_woba_season_to_date",
                 "batter_iso_season_to_date",
+                "batter_babip_season_to_date",
+                "batter_bb_rate_season_to_date",
+                "batter_k_rate_season_to_date",
+                "batter_xwoba_proxy",
+                "batter_hard_contact_proxy",
                 "batter_woba_vs_rhp_to_date",
                 "batter_woba_vs_lhp_to_date",
                 "batter_statcast_xwoba_to_date",
@@ -490,7 +558,12 @@ class FeatureBuilder:
         profile_columns = [
             "batter_ops_season_to_date",
             "batter_woba_season_to_date",
-            "batter_iso_season_to_date",
+                "batter_iso_season_to_date",
+                "batter_babip_season_to_date",
+                "batter_bb_rate_season_to_date",
+                "batter_k_rate_season_to_date",
+                "batter_xwoba_proxy",
+                "batter_hard_contact_proxy",
             "batter_woba_vs_rhp_to_date",
             "batter_woba_vs_lhp_to_date",
             "batter_statcast_xwoba_to_date",
@@ -530,6 +603,12 @@ class FeatureBuilder:
                 {
                     "lineup_avg_ops": group["batter_ops_season_to_date"].mean(),
                     "lineup_avg_woba": group["batter_woba_season_to_date"].mean(),
+                    "lineup_avg_iso": group["batter_iso_season_to_date"].mean(),
+                    "lineup_avg_babip": group["batter_babip_season_to_date"].mean(),
+                    "lineup_bb_rate": group["batter_bb_rate_season_to_date"].mean(),
+                    "lineup_k_rate": group["batter_k_rate_season_to_date"].mean(),
+                    "lineup_xwoba_proxy": group["batter_xwoba_proxy"].mean(),
+                    "lineup_hard_contact_proxy": group["batter_hard_contact_proxy"].mean(),
                     "lineup_weighted_woba_by_order": weighted_woba,
                     "lineup_top3_woba": group.loc[group["batting_order"].between(1, 3), "batter_woba_season_to_date"].mean(),
                     "lineup_3to5_woba": group.loc[group["batting_order"].between(3, 5), "batter_woba_season_to_date"].mean(),
@@ -568,7 +647,13 @@ class FeatureBuilder:
                 "team",
                 "lineup_avg_ops",
                 "lineup_avg_woba",
+                "lineup_avg_iso",
+                "lineup_avg_babip",
+                "lineup_bb_rate",
+                "lineup_k_rate",
                 "lineup_weighted_woba_by_order",
+                "lineup_xwoba_proxy",
+                "lineup_hard_contact_proxy",
                 "lineup_top3_woba",
                 "lineup_3to5_woba",
                 "lineup_bottom4_ops",
@@ -699,6 +784,8 @@ class FeatureBuilder:
             "pitcher_logs",
         )
         logs = _ensure_numeric_columns(pitcher_logs, PITCHING_STATS)
+        missing_bf = pd.to_numeric(logs["batters_faced"], errors="coerce").le(0)
+        logs.loc[missing_bf, "batters_faced"] = _estimate_batters_faced(logs.loc[missing_bf])
         if "is_start" in logs.columns:
             starts = logs[logs["is_start"].astype(float) == 1].copy()
         elif "role" in logs.columns:
@@ -709,7 +796,12 @@ class FeatureBuilder:
         starts = starts.sort_values(["player_id", "season", "game_date", "game_id"]).reset_index(drop=True)
         group_keys = ["player_id", "season"]
         for column in PITCHING_STATS:
-            starts[f"{column}_prior"] = starts.groupby(group_keys, sort=False)[column].cumsum() - starts[column]
+            # Fill before the cumulative sum so a synthetic scheduled-start row
+            # (probable starter, no box score yet) carries the pitcher's prior
+            # season-to-date instead of poisoning it to NaN. For played starts
+            # the stat is present, so this is a no-op.
+            filled = starts[column].fillna(0.0)
+            starts[f"{column}_prior"] = filled.groupby([starts[key] for key in group_keys], sort=False).cumsum() - filled
 
         starts["sp_fip_season_to_date"] = _pitching_fip(
             starts["innings_pitched_prior"],
@@ -723,10 +815,40 @@ class FeatureBuilder:
             starts["hits_prior"] + starts["walks_prior"],
             starts["innings_pitched_prior"],
         )
+        starts["sp_era_season_to_date"] = _safe_divide(
+            9.0 * starts["earned_runs_prior"],
+            starts["innings_pitched_prior"],
+        )
         starts["sp_kbb_rate_season_to_date"] = _safe_divide(
             starts["strikeouts_prior"] - starts["walks_prior"],
             starts["batters_faced_prior"],
         )
+        starts["sp_k_rate_season_to_date"] = _safe_divide(
+            starts["strikeouts_prior"],
+            starts["batters_faced_prior"],
+        )
+        starts["sp_bb_rate_season_to_date"] = _safe_divide(
+            starts["walks_prior"],
+            starts["batters_faced_prior"],
+        )
+        starts["sp_k_per_9_season_to_date"] = _safe_divide(
+            9.0 * starts["strikeouts_prior"],
+            starts["innings_pitched_prior"],
+        )
+        starts["sp_bb_per_9_season_to_date"] = _safe_divide(
+            9.0 * starts["walks_prior"],
+            starts["innings_pitched_prior"],
+        )
+        starts["sp_hr_per_9_season_to_date"] = _safe_divide(
+            9.0 * starts["home_runs_prior"],
+            starts["innings_pitched_prior"],
+        )
+        starts["sp_whiff_proxy"] = _safe_divide(
+            starts["strikeouts_prior"],
+            starts["batters_faced_prior"],
+        )
+        starts["sp_run_prevention_proxy"] = starts["sp_fip_season_to_date"]
+        starts["sp_command_proxy"] = starts["sp_kbb_rate_season_to_date"]
         starts["start_fip"] = _pitching_fip(
             starts["innings_pitched"],
             starts["home_runs"],
@@ -812,7 +934,16 @@ class FeatureBuilder:
                 "player_id",
                 "sp_fip_season_to_date",
                 "sp_whip_season_to_date",
+                "sp_era_season_to_date",
                 "sp_kbb_rate_season_to_date",
+                "sp_k_rate_season_to_date",
+                "sp_bb_rate_season_to_date",
+                "sp_k_per_9_season_to_date",
+                "sp_bb_per_9_season_to_date",
+                "sp_hr_per_9_season_to_date",
+                "sp_whiff_proxy",
+                "sp_run_prevention_proxy",
+                "sp_command_proxy",
                 "sp_fip_last_3_starts",
                 "sp_fip_last_5_starts",
                 "sp_ip_avg_last_3_starts",
@@ -834,18 +965,27 @@ class FeatureBuilder:
 
     def _compute_team_features(self, games: pd.DataFrame, batting_logs: pd.DataFrame) -> pd.DataFrame:
         team_rows = _team_game_rows(games)
+        team_rows = _with_datetime(team_rows)
+        # Fill scores before the cumulative sum so a scheduled (not-yet-played)
+        # game with NaN runs does not poison its own running total to NaN/0; the
+        # prior-game average still carries forward. No-op for played games.
+        team_rows["_runs_for_filled"] = team_rows["runs_for"].fillna(0)
+        team_rows["_runs_allowed_filled"] = team_rows["runs_allowed"].fillna(0)
         grouped = team_rows.groupby(["team", "season"], group_keys=False, sort=False)
         team_rows["team_games_played_to_date"] = grouped.cumcount()
         team_rows["team_runs_per_game_to_date"] = _safe_divide(
-            grouped["runs_for"].cumsum().fillna(0) - team_rows["runs_for"].fillna(0),
+            grouped["_runs_for_filled"].cumsum() - team_rows["_runs_for_filled"],
             team_rows["team_games_played_to_date"],
         )
         team_rows["team_runs_allowed_per_game_to_date"] = _safe_divide(
-            grouped["runs_allowed"].cumsum().fillna(0) - team_rows["runs_allowed"].fillna(0),
+            grouped["_runs_allowed_filled"].cumsum() - team_rows["_runs_allowed_filled"],
             team_rows["team_games_played_to_date"],
         )
         team_rows["team_recent_7g_win_rate"] = grouped["win"].apply(lambda series: series.shift(1).rolling(7, min_periods=1).mean())
         team_rows["team_recent_10g_win_rate"] = grouped["win"].apply(lambda series: series.shift(1).rolling(10, min_periods=1).mean())
+        team_rows["run_diff"] = team_rows["runs_for"] - team_rows["runs_allowed"]
+        team_rows["one_run_game"] = team_rows["run_diff"].abs().eq(1).astype(float)
+        team_rows["one_run_win"] = np.where(team_rows["one_run_game"].eq(1), team_rows["win"], np.nan)
 
         batting = _ensure_numeric_columns(batting_logs, BATTING_STATS)
         team_batting = (
@@ -858,8 +998,11 @@ class FeatureBuilder:
             team_rows[f"{column}_prior"] = team_rows.groupby(["team", "season"], sort=False)[column].cumsum() - team_rows[column]
 
         ops, woba, _ = _batting_rates_from_columns(team_rows, suffix="_prior")
+        _, team_bb_rate, team_k_rate = _batting_public_rates_from_columns(team_rows, suffix="_prior")
         team_rows["team_ops_season_to_date"] = ops
         team_rows["team_woba_season_to_date"] = woba
+        team_rows["team_bb_rate_season_to_date"] = team_bb_rate
+        team_rows["team_k_rate_season_to_date"] = team_k_rate
 
         for days in [14, 30]:
             pieces = []
@@ -875,18 +1018,88 @@ class FeatureBuilder:
             window = pd.concat(pieces, ignore_index=True)
             team_rows = team_rows.merge(window, on=["game_id", "team"], how="left")
 
+        recent_pieces = []
+        for _, group in team_rows.groupby(["team", "season"], sort=False):
+            group = group.sort_values(["game_date", "game_id"]).copy()
+            group["team_weighted_win_rate_last_10"] = _weighted_recent_before_current(group["win"], window=10)
+            group["team_weighted_win_rate_last_20"] = _weighted_recent_before_current(group["win"], window=20)
+            group["team_weighted_run_diff_last_10"] = _weighted_recent_before_current(group["run_diff"], window=10)
+            group["team_weighted_run_diff_last_20"] = _weighted_recent_before_current(group["run_diff"], window=20)
+            group["team_weighted_runs_for_last_10"] = _weighted_recent_before_current(group["runs_for"], window=10)
+            group["team_weighted_runs_allowed_last_10"] = _weighted_recent_before_current(group["runs_allowed"], window=10)
+            group["team_low_run_rate_last_10"] = _rolling_rate_before_current(group["runs_for"].le(2).astype(float), window=10)
+            group["team_5plus_run_rate_last_10"] = _rolling_rate_before_current(group["runs_for"].ge(5).astype(float), window=10)
+            group["team_one_run_game_rate_last_20"] = _rolling_rate_before_current(group["one_run_game"], window=20)
+            group["team_one_run_win_rate_last_20"] = _rolling_rate_before_current(group["one_run_win"], window=20)
+            group["team_runs_for_volatility_last_10"] = group["runs_for"].shift(1).rolling(10, min_periods=2).std()
+            wins_20 = group["win"].shift(1).rolling(20, min_periods=1).mean()
+            runs_for_20 = group["runs_for"].shift(1).rolling(20, min_periods=1).sum()
+            runs_allowed_20 = group["runs_allowed"].shift(1).rolling(20, min_periods=1).sum()
+            pythag_denominator = runs_for_20.pow(2) + runs_allowed_20.pow(2)
+            group["team_pythagorean_win_pct_last_20"] = np.divide(
+                runs_for_20.pow(2),
+                pythag_denominator,
+                out=np.full(len(group), np.nan, dtype=float),
+                where=pythag_denominator.to_numpy(dtype=float) > 0,
+            )
+            group["team_actual_minus_pythag_last_20"] = wins_20 - group["team_pythagorean_win_pct_last_20"]
+            group["team_close_win_dependency_last_20"] = _rolling_rate_before_current(
+                pd.Series(np.where(group["win"].eq(1), group["one_run_game"], np.nan), index=group.index),
+                window=20,
+            )
+            recent_pieces.append(
+                group[
+                    [
+                        "game_id",
+                        "team",
+                        "team_weighted_win_rate_last_10",
+                        "team_weighted_win_rate_last_20",
+                        "team_weighted_run_diff_last_10",
+                        "team_weighted_run_diff_last_20",
+                        "team_weighted_runs_for_last_10",
+                        "team_weighted_runs_allowed_last_10",
+                        "team_low_run_rate_last_10",
+                        "team_5plus_run_rate_last_10",
+                        "team_one_run_game_rate_last_20",
+                        "team_one_run_win_rate_last_20",
+                        "team_runs_for_volatility_last_10",
+                        "team_pythagorean_win_pct_last_20",
+                        "team_actual_minus_pythag_last_20",
+                        "team_close_win_dependency_last_20",
+                    ]
+                ]
+            )
+        recent = pd.concat(recent_pieces, ignore_index=True)
+        team_rows = team_rows.merge(recent, on=["game_id", "team"], how="left")
+
         return team_rows[
             [
                 "game_id",
                 "team",
                 "team_ops_season_to_date",
                 "team_woba_season_to_date",
+                "team_bb_rate_season_to_date",
+                "team_k_rate_season_to_date",
                 "team_runs_per_game_to_date",
                 "team_runs_allowed_per_game_to_date",
                 "team_recent_7g_win_rate",
                 "team_recent_10g_win_rate",
                 "team_ops_last_14d",
                 "team_ops_last_30d",
+                "team_weighted_win_rate_last_10",
+                "team_weighted_win_rate_last_20",
+                "team_weighted_run_diff_last_10",
+                "team_weighted_run_diff_last_20",
+                "team_weighted_runs_for_last_10",
+                "team_weighted_runs_allowed_last_10",
+                "team_low_run_rate_last_10",
+                "team_5plus_run_rate_last_10",
+                "team_one_run_game_rate_last_20",
+                "team_one_run_win_rate_last_20",
+                "team_runs_for_volatility_last_10",
+                "team_pythagorean_win_pct_last_20",
+                "team_actual_minus_pythag_last_20",
+                "team_close_win_dependency_last_20",
             ]
         ]
 
@@ -938,6 +1151,8 @@ class FeatureBuilder:
     def _compute_bullpen_features(self, games: pd.DataFrame, pitcher_logs: pd.DataFrame) -> pd.DataFrame:
         team_rows = _team_game_rows(games)[["game_id", "game_date", "season", "team"]]
         logs = _ensure_numeric_columns(pitcher_logs, PITCHING_STATS)
+        missing_bf = pd.to_numeric(logs["batters_faced"], errors="coerce").le(0)
+        logs.loc[missing_bf, "batters_faced"] = _estimate_batters_faced(logs.loc[missing_bf])
         if "is_start" in logs.columns:
             relief = logs[logs["is_start"].astype(float) == 0].copy()
         elif "role" in logs.columns:
@@ -1125,6 +1340,9 @@ class FeatureBuilder:
         if park_factors is not None and "venue_id" in out.columns:
             _require_columns(park_factors, ["venue_id"], "park_factors")
             park_columns = [column for column in PARK_FACTOR_COLUMNS if column in park_factors.columns]
+            out["venue_id"] = out["venue_id"].astype("string")
+            park_factors = park_factors.copy()
+            park_factors["venue_id"] = park_factors["venue_id"].astype("string")
             if "season" in park_factors.columns:
                 out = out.merge(park_factors[["venue_id", "season", *park_columns]], on=["venue_id", "season"], how="left")
             else:
@@ -1237,13 +1455,46 @@ class FeatureBuilder:
         out = features.copy()
         out["sp_fip_diff"] = out["away_sp_fip_season_to_date"] - out["home_sp_fip_season_to_date"]
         out["lineup_woba_diff"] = out["home_lineup_avg_woba"] - out["away_lineup_avg_woba"]
+        out["lineup_iso_diff"] = out["home_lineup_avg_iso"] - out["away_lineup_avg_iso"]
+        out["lineup_bb_rate_diff"] = out["home_lineup_bb_rate"] - out["away_lineup_bb_rate"]
+        out["lineup_k_rate_diff"] = out["away_lineup_k_rate"] - out["home_lineup_k_rate"]
         out["lineup_platoon_woba_diff"] = out["home_lineup_platoon_woba"] - out["away_lineup_platoon_woba"]
         out["lineup_platoon_advantage_diff"] = (
             out["home_lineup_platoon_advantage_ratio"] - out["away_lineup_platoon_advantage_ratio"]
         )
         out["bullpen_fatigue_diff"] = out["away_bullpen_fatigue_score"] - out["home_bullpen_fatigue_score"]
         out["team_woba_diff"] = out["home_team_woba_season_to_date"] - out["away_team_woba_season_to_date"]
+        out["team_bb_rate_diff"] = out["home_team_bb_rate_season_to_date"] - out["away_team_bb_rate_season_to_date"]
+        out["team_k_rate_diff"] = out["away_team_k_rate_season_to_date"] - out["home_team_k_rate_season_to_date"]
+        out["team_weighted_win_rate_last_10_diff"] = (
+            out["home_team_weighted_win_rate_last_10"] - out["away_team_weighted_win_rate_last_10"]
+        )
+        out["team_weighted_run_diff_last_10_diff"] = (
+            out["home_team_weighted_run_diff_last_10"] - out["away_team_weighted_run_diff_last_10"]
+        )
+        out["team_weighted_runs_for_last_10_diff"] = (
+            out["home_team_weighted_runs_for_last_10"] - out["away_team_weighted_runs_for_last_10"]
+        )
+        out["team_weighted_runs_allowed_last_10_diff"] = (
+            out["away_team_weighted_runs_allowed_last_10"] - out["home_team_weighted_runs_allowed_last_10"]
+        )
+        out["team_low_run_rate_last_10_diff"] = (
+            out["away_team_low_run_rate_last_10"] - out["home_team_low_run_rate_last_10"]
+        )
+        out["team_5plus_run_rate_last_10_diff"] = (
+            out["home_team_5plus_run_rate_last_10"] - out["away_team_5plus_run_rate_last_10"]
+        )
+        out["team_actual_minus_pythag_last_20_diff"] = (
+            out["home_team_actual_minus_pythag_last_20"] - out["away_team_actual_minus_pythag_last_20"]
+        )
+        out["team_close_win_dependency_last_20_diff"] = (
+            out["home_team_close_win_dependency_last_20"] - out["away_team_close_win_dependency_last_20"]
+        )
         out["lineup_statcast_xwoba_diff"] = out["home_lineup_statcast_xwoba"] - out["away_lineup_statcast_xwoba"]
+        out["lineup_xwoba_proxy_diff"] = out["home_lineup_xwoba_proxy"] - out["away_lineup_xwoba_proxy"]
+        out["lineup_hard_contact_proxy_diff"] = (
+            out["home_lineup_hard_contact_proxy"] - out["away_lineup_hard_contact_proxy"]
+        )
         out["sp_statcast_xwoba_allowed_diff"] = (
             out["away_sp_statcast_xwoba_allowed_to_date"] - out["home_sp_statcast_xwoba_allowed_to_date"]
         )
@@ -1258,5 +1509,11 @@ class FeatureBuilder:
         out["travel_rest_diff"] = out["home_travel_rest_days"] - out["away_travel_rest_days"]
         out["travel_timezone_shift_diff"] = out["away_travel_timezone_shift"].abs() - out["home_travel_timezone_shift"].abs()
         out["sp_whiff_rate_diff"] = out["home_sp_whiff_rate_to_date"] - out["away_sp_whiff_rate_to_date"]
+        out["sp_whiff_proxy_diff"] = out["home_sp_whiff_proxy"] - out["away_sp_whiff_proxy"]
+        out["sp_run_prevention_proxy_diff"] = out["away_sp_run_prevention_proxy"] - out["home_sp_run_prevention_proxy"]
+        out["sp_command_proxy_diff"] = out["home_sp_command_proxy"] - out["away_sp_command_proxy"]
+        out["sp_era_diff"] = out["away_sp_era_season_to_date"] - out["home_sp_era_season_to_date"]
+        out["sp_k_rate_public_diff"] = out["home_sp_k_rate_season_to_date"] - out["away_sp_k_rate_season_to_date"]
+        out["sp_bb_rate_public_diff"] = out["away_sp_bb_rate_season_to_date"] - out["home_sp_bb_rate_season_to_date"]
         out["sp_fastball_velocity_diff"] = out["home_sp_avg_fastball_velocity_to_date"] - out["away_sp_avg_fastball_velocity_to_date"]
         return out

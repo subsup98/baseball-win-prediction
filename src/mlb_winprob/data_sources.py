@@ -7,7 +7,7 @@ import json
 import random
 import re
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import StringIO
 from pathlib import Path
@@ -22,6 +22,9 @@ MLB_STATS_API_FEED_BASE_URL = "https://statsapi.mlb.com/api/v1.1"
 OPEN_METEO_ARCHIVE_BASE_URL = "https://archive-api.open-meteo.com/v1"
 BALLDONTLIE_MLB_API_BASE_URL = "https://api.balldontlie.io/mlb/v1"
 MYKBO_STATS_BASE_URL = "https://mykbostats.com"
+NPB_OFFICIAL_BASE_URL = "https://npb.jp"
+PROEYEKYUU_BASE_URL = "https://proeyekyuu.com"
+BASEBALL_DATA_JP_BASE_URL = "https://baseballdata.jp"
 RETROSHEET_BASE_URL = "https://www.retrosheet.org/downloads"
 BASEBALL_DATABANK_BASE_URL = "https://raw.githubusercontent.com/chadwickbureau/baseballdatabank/master/core"
 CHADWICK_REGISTER_BASE_URL = "https://raw.githubusercontent.com/chadwickbureau/register/master/data"
@@ -902,3 +905,398 @@ class MyKBOStatsCollector:
             ),
             "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         }
+
+
+class PublicHtmlTableCollector:
+    """Small collector for public HTML pages with tabular baseball data."""
+
+    PAGE_PATHS: dict[str, str] = {}
+
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip("/")
+
+    def page_url(self, page: str, season: int | None = None) -> str:
+        if page not in self.PAGE_PATHS:
+            valid = ", ".join(sorted(self.PAGE_PATHS))
+            raise ValueError(f"Unknown page '{page}'. Valid values: {valid}")
+        path = self.PAGE_PATHS[page].format(season=season or "")
+        return path if path.startswith("http") else f"{self.base_url}{path}"
+
+    def fetch_page(self, page: str, season: int | None = None) -> str:
+        return fetch_text(self.page_url(page, season), headers=self._headers())
+
+    def save_page(self, page: str, output: str | Path, *, season: int | None = None) -> Path:
+        target = Path(output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.fetch_page(page, season), encoding="utf-8")
+        return target
+
+    def save_pages(
+        self,
+        output_dir: str | Path,
+        *,
+        pages: list[str] | None = None,
+        season: int | None = None,
+        skip_existing: bool = True,
+    ) -> list[Path]:
+        target_dir = Path(output_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        saved: list[Path] = []
+        for page in pages or list(self.PAGE_PATHS):
+            suffix = f"_{season}" if season is not None else ""
+            path = target_dir / f"{page}{suffix}.html"
+            if skip_existing and path.exists() and path.stat().st_size > 0:
+                saved.append(path)
+                continue
+            saved.append(self.save_page(page, path, season=season))
+        return saved
+
+    @staticmethod
+    def parse_html_tables(html: str) -> list[pd.DataFrame]:
+        try:
+            return pd.read_html(StringIO(html), flavor="lxml")
+        except (ImportError, ValueError):
+            return []
+
+    @staticmethod
+    def extract_links(html: str) -> pd.DataFrame:
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            return pd.DataFrame(columns=["text", "href"])
+
+        soup = BeautifulSoup(html, "lxml")
+        rows = []
+        for link in soup.find_all("a"):
+            href = link.get("href")
+            text = " ".join(link.get_text(" ", strip=True).split())
+            if href:
+                rows.append({"text": text, "href": href})
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def extract_dynamic_tables(html: str) -> pd.DataFrame:
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            return pd.DataFrame(columns=["table_id", "filter_labels"])
+
+        soup = BeautifulSoup(html, "lxml")
+        rows = []
+        for wrapper in soup.select("[data-wpdatatable_id]"):
+            labels = [
+                " ".join(label.get_text(" ", strip=True).replace(":", "").split())
+                for label in wrapper.select(".wpDataTableFilterSection label")
+            ]
+            rows.append(
+                {
+                    "table_id": wrapper.get("data-wpdatatable_id"),
+                    "filter_labels": "|".join(label for label in labels if label),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def extract_iframes(html: str) -> pd.DataFrame:
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            return pd.DataFrame(columns=["iframe_id", "title", "src"])
+
+        soup = BeautifulSoup(html, "lxml")
+        rows = []
+        for iframe in soup.find_all("iframe"):
+            src = iframe.get("src")
+            if src:
+                rows.append(
+                    {
+                        "iframe_id": iframe.get("id"),
+                        "title": iframe.get("title"),
+                        "src": src,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def extract_static_html_tables(html: str) -> list[pd.DataFrame]:
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            return []
+
+        soup = BeautifulSoup(html, "lxml")
+        frames: list[pd.DataFrame] = []
+        for table in soup.find_all("table"):
+            headers = [" ".join(header.get_text(" ", strip=True).split()) for header in table.find_all("th")]
+            if not headers:
+                continue
+            normalized_headers = []
+            seen_headers: dict[str, int] = {}
+            for index, header in enumerate(headers, start=1):
+                base = header if header else f"column_{index}"
+                count = seen_headers.get(base, 0) + 1
+                seen_headers[base] = count
+                normalized_headers.append(base if count == 1 else f"{base}_{count}")
+            rows = []
+            for tr in table.find_all("tr"):
+                cells = [" ".join(cell.get_text(" ", strip=True).split()) for cell in tr.find_all("td")]
+                if len(cells) == len(normalized_headers):
+                    rows.append(cells)
+            if rows:
+                frames.append(pd.DataFrame(rows, columns=normalized_headers))
+        return frames
+
+    @classmethod
+    def write_html_tables(cls, html_path: str | Path, output_dir: str | Path) -> list[Path]:
+        source = Path(html_path)
+        target_dir = Path(output_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        html = source.read_text(encoding="utf-8")
+        paths: list[Path] = []
+        tables = cls.parse_html_tables(html)
+        if not tables:
+            tables = cls.extract_static_html_tables(html)
+        for index, table in enumerate(tables, start=1):
+            output = target_dir / f"{source.stem}_table_{index}.csv"
+            table.to_csv(output, index=False)
+            paths.append(output)
+        links = cls.extract_links(html)
+        if not links.empty:
+            output = target_dir / f"{source.stem}_links.csv"
+            links.to_csv(output, index=False)
+            paths.append(output)
+        dynamic_tables = cls.extract_dynamic_tables(html)
+        if not dynamic_tables.empty:
+            output = target_dir / f"{source.stem}_dynamic_tables.csv"
+            dynamic_tables.to_csv(output, index=False)
+            paths.append(output)
+        iframes = cls.extract_iframes(html)
+        if not iframes.empty:
+            output = target_dir / f"{source.stem}_iframes.csv"
+            iframes.to_csv(output, index=False)
+            paths.append(output)
+        return paths
+
+    @staticmethod
+    def _headers() -> dict[str, str]:
+        return MyKBOStatsCollector._headers()
+
+
+class NPBOfficialCollector(PublicHtmlTableCollector):
+    """Collector for official NPB public pages used as source-of-truth checks."""
+
+    PAGE_PATHS = {
+        "home": "/eng/",
+        "abbreviations": "/eng/home/abbreviations.html",
+        "teams": "/eng/teams/",
+        "players": "/eng/players/",
+        "schedule_scores": "/eng/schedule/",
+        "standings": "/eng/standings/",
+        "stats": "/eng/bis/{season}/stats/",
+    }
+
+    def __init__(self, base_url: str = NPB_OFFICIAL_BASE_URL) -> None:
+        super().__init__(base_url)
+
+
+class ProEyeKyuuCollector(PublicHtmlTableCollector):
+    """Collector for ProEyeKyuu downloadable NPB tables."""
+
+    GAME_RESULTS_COLUMNS = [
+        "GameIDHA",
+        "GameID",
+        "Season",
+        "Date",
+        "Game Type",
+        "TeamLogoUrl",
+        "Team",
+        "Home or Away",
+        "Result",
+        "Score",
+        "Other Team",
+        "OtherTeamLogoUrl",
+        "R",
+        "H",
+        "E",
+        "Box Score",
+        "Matchup",
+        "Ballpark",
+        "Game Start",
+        "Game Length",
+        "Audience",
+        "GameIDLink",
+    ]
+
+    PAGE_PATHS = {
+        "csvs": "/csvs/",
+        "player_registry": "/player-registry/",
+        "game_results": "/game-results-table/",
+        "game_results_dashboard": "/game-results/",
+        "player_batting_stats": "/player-batting-stats/",
+        "player_pitching_stats": "/player-pitching-stats/",
+        "player_fielding_stats": "/player-fielding-stats/",
+        "team_batting_stats": "/team-batting-stats/",
+        "team_pitching_stats": "/team-pitching-stats/",
+        "team_fielding_stats": "/team-fielding-stats/",
+    }
+
+    def __init__(self, base_url: str = PROEYEKYUU_BASE_URL) -> None:
+        super().__init__(base_url)
+
+    def game_url(self, game_id: str) -> str:
+        return f"{self.base_url}/game/?GameID={game_id}"
+
+    @staticmethod
+    def _strip_html(value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return re.sub(r"<[^>]+>", "", value).strip()
+
+    @classmethod
+    def _game_results_request_payload(
+        cls,
+        *,
+        nonce: str,
+        season: int,
+        start: int = 0,
+        length: int = 1000,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "draw": 1,
+            "start": start,
+            "length": length,
+            "search[value]": "",
+            "search[regex]": "false",
+            "wdtNonce": nonce,
+            "showAllRows": "false",
+            "order[0][column]": 3,
+            "order[0][dir]": "desc",
+        }
+        for index, column in enumerate(cls.GAME_RESULTS_COLUMNS):
+            payload[f"columns[{index}][data]"] = str(index)
+            payload[f"columns[{index}][name]"] = column
+            payload[f"columns[{index}][searchable]"] = "true"
+            payload[f"columns[{index}][orderable]"] = "true"
+            payload[f"columns[{index}][search][value]"] = ""
+            payload[f"columns[{index}][search][regex]"] = "false"
+        payload["columns[2][search][value]"] = str(season)
+        return payload
+
+    def fetch_game_results(self, season: int, *, page_length: int = 1000) -> pd.DataFrame:
+        """Fetch one season from the ProEyeKyuu server-side game-results table."""
+
+        import requests
+
+        session = requests.Session()
+        page_headers = self._headers()
+        ajax_headers = {
+            **self._headers(),
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Referer": self.page_url("game_results"),
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        page = session.get(self.page_url("game_results"), headers=page_headers, timeout=30)
+        page.raise_for_status()
+        match = re.search(r'id="wdtNonceFrontendServerSide_25"[^>]*value="([^"]+)"', page.text)
+        if not match:
+            raise ValueError("Could not find ProEyeKyuu game-results nonce")
+        nonce = match.group(1)
+
+        rows: list[list[object]] = []
+        records_filtered: int | None = None
+        start = 0
+        endpoint = f"{self.base_url}/wp-admin/admin-ajax.php?action=get_wdtable&table_id=25"
+        while records_filtered is None or start < records_filtered:
+            payload = self._game_results_request_payload(
+                nonce=nonce,
+                season=season,
+                start=start,
+                length=page_length,
+            )
+            response = session.post(endpoint, data=payload, headers=ajax_headers, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            records_filtered = int(data.get("recordsFiltered") or 0)
+            batch = data.get("data") or []
+            if not batch:
+                break
+            rows.extend(batch)
+            start += len(batch)
+
+        frame = pd.DataFrame(rows, columns=self.GAME_RESULTS_COLUMNS[: len(self.GAME_RESULTS_COLUMNS)])
+        for column in frame.select_dtypes(include="object").columns:
+            frame[column] = frame[column].map(self._strip_html)
+        if "Season" in frame.columns:
+            frame["Season"] = pd.to_numeric(frame["Season"], errors="coerce").astype("Int64")
+        if "Date" in frame.columns:
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        return frame
+
+    def save_game_results(
+        self,
+        output: str | Path,
+        *,
+        seasons: Iterable[int],
+        end_date: str | None = None,
+        page_length: int = 1000,
+    ) -> Path:
+        frames = [self.fetch_game_results(season, page_length=page_length) for season in seasons]
+        combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=self.GAME_RESULTS_COLUMNS)
+        if end_date and "Date" in combined.columns:
+            dates = pd.to_datetime(combined["Date"], errors="coerce")
+            combined = combined[dates.le(pd.Timestamp(end_date))].copy()
+        path = Path(output)
+        write_csv_table(combined, path)
+        return path
+
+    def save_game_pages(
+        self,
+        games: pd.DataFrame,
+        output_dir: str | Path,
+        *,
+        limit: int | None = None,
+        skip_existing: bool = True,
+        workers: int = 1,
+    ) -> list[Path]:
+        if "game_id" not in games.columns:
+            raise ValueError("games must include game_id")
+        target_dir = Path(output_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        rows = games.dropna(subset=["game_id"]).copy()
+        if limit:
+            rows = rows.head(limit)
+        game_ids = rows["game_id"].astype(str).tolist()
+
+        def save_one(game_id: str) -> Path:
+            path = target_dir / f"{game_id}_game.html"
+            if skip_existing and path.exists() and path.stat().st_size > 0:
+                return path
+            path.write_text(fetch_text(self.game_url(game_id), headers=self._headers()), encoding="utf-8")
+            return path
+
+        if workers <= 1:
+            return [save_one(game_id) for game_id in game_ids]
+
+        saved: list[Path] = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(save_one, game_id): game_id for game_id in game_ids}
+            for future in as_completed(futures):
+                saved.append(future.result())
+        return sorted(saved)
+
+
+class BaseballDataJPCollector(PublicHtmlTableCollector):
+    """Collector for BaseballData.jp NPB analysis pages."""
+
+    PAGE_PATHS = {
+        "home": "/en/",
+        "central": "/en/c/",
+        "pacific": "/en/p/",
+        "central_batting_leaders": "/en/{season}/ctop.html",
+        "central_pitching_leaders": "/en/{season}/cptop.html",
+        "pacific_batting_leaders": "/en/{season}/ptop.html",
+        "pacific_pitching_leaders": "/en/{season}/pptop.html",
+    }
+
+    def __init__(self, base_url: str = BASEBALL_DATA_JP_BASE_URL) -> None:
+        super().__init__(base_url)

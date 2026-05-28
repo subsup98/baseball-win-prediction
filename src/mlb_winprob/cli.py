@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import sleep
@@ -15,11 +16,14 @@ import pandas as pd
 
 from mlb_winprob.data_sources import (
     BallDontLieMLBCollector,
+    BaseballDataJPCollector,
     ChadwickRegisterCollector,
     LahmanCollector,
     MLBStatsApiCollector,
     MyKBOStatsCollector,
+    NPBOfficialCollector,
     OpenMeteoArchiveCollector,
+    ProEyeKyuuCollector,
     PyBaseballCollector,
     RetrosheetCollector,
     default_collection_workers,
@@ -29,11 +33,29 @@ from mlb_winprob.data_sources import (
 )
 from mlb_winprob.config import config_digest, load_season_holdout_config, versioned_output_dir, write_run_metadata
 from mlb_winprob.experiments import make_regressor, run_model_experiments, run_oof_win_predictions, select_feature_columns
-from mlb_winprob.evaluation import apply_model_agreement_pick_rules, apply_win_pick_rules, summarize_win_pick_rules
+from mlb_winprob.evaluation import (
+    apply_model_agreement_pick_rules,
+    apply_ou_pick_rules,
+    apply_win_pick_rules,
+    summarize_ou_pick_rules,
+    summarize_win_pick_rules,
+)
 from mlb_winprob.features import FeatureBuilder
 from mlb_winprob.id_map import build_external_game_id_map, build_external_player_id_map, write_id_map
 from mlb_winprob.kbo import standardize_mykbo_game_tables, standardize_mykbo_schedule_links, standardize_mykbo_tables
 from mlb_winprob.models import make_classifier
+from mlb_winprob.npb import (
+    standardize_proeyekyuu_game_results,
+    standardize_proeyekyuu_game_tables,
+    standardize_proeyekyuu_tables,
+    write_npb_feature_set,
+    write_npb_model_ready_features,
+    write_npb_games_with_venues,
+    write_npb_venue_template,
+    write_proeyekyuu_batting_detail_audit,
+    write_proeyekyuu_coverage_report,
+    write_proeyekyuu_games_with_starters,
+)
 from mlb_winprob.park_factors import build_empirical_park_factors
 from mlb_winprob.prediction import build_prediction_result, simple_key_reasons
 from mlb_winprob.reporting import (
@@ -66,19 +88,110 @@ def _add_common_raw_args(parser: argparse.ArgumentParser) -> None:
 
 
 def build_features_command(args: argparse.Namespace) -> None:
-    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode=args.prediction_mode))
-    features = builder.build(
-        games=read_csv_table(args.games),
-        batting_logs=read_csv_table(args.batting_logs),
-        pitcher_logs=read_csv_table(args.pitcher_logs),
-        lineups=read_csv_table(args.lineups),
-        weather=read_csv_table(args.weather) if args.weather else None,
-        park_factors=read_csv_table(args.park_factors) if args.park_factors else None,
-        venues=read_csv_table(args.venues) if args.venues else None,
-        market_lines=read_csv_table(args.market_lines) if args.market_lines else None,
-    )
+    games = read_csv_table(args.games)
+    batting_logs = read_csv_table(args.batting_logs)
+    pitcher_logs = read_csv_table(args.pitcher_logs)
+    lineups = read_csv_table(args.lineups)
+    weather = read_csv_table(args.weather) if args.weather else None
+    park_factors = read_csv_table(args.park_factors) if args.park_factors else None
+    venues = read_csv_table(args.venues) if args.venues else None
+    market_lines = read_csv_table(args.market_lines) if args.market_lines else None
+    workers = args.workers or 1
+    if workers > 1:
+        features = _build_features_by_season_parallel(
+            games=games,
+            batting_logs=batting_logs,
+            pitcher_logs=pitcher_logs,
+            lineups=lineups,
+            weather=weather,
+            park_factors=park_factors,
+            venues=venues,
+            market_lines=market_lines,
+            prediction_mode=args.prediction_mode,
+            workers=workers,
+        )
+    else:
+        builder = FeatureBuilder(FeatureBuildConfig(prediction_mode=args.prediction_mode))
+        features = builder.build(
+            games=games,
+            batting_logs=batting_logs,
+            pitcher_logs=pitcher_logs,
+            lineups=lineups,
+            weather=weather,
+            park_factors=park_factors,
+            venues=venues,
+            market_lines=market_lines,
+        )
     write_csv_table(features, args.output)
     print(f"Wrote {len(features)} feature rows to {args.output}")
+
+
+def _filter_for_season(frame: pd.DataFrame | None, season: int, game_ids: set[str]) -> pd.DataFrame | None:
+    if frame is None:
+        return None
+    if "season" in frame.columns:
+        seasons = pd.to_numeric(frame["season"], errors="coerce")
+        return frame[seasons.eq(season)].copy()
+    if "game_id" in frame.columns:
+        return frame[frame["game_id"].astype(str).isin(game_ids)].copy()
+    return frame.copy()
+
+
+def _build_features_for_season(payload: dict[str, object]) -> pd.DataFrame:
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode=str(payload["prediction_mode"])))
+    return builder.build(
+        games=payload["games"],
+        batting_logs=payload["batting_logs"],
+        pitcher_logs=payload["pitcher_logs"],
+        lineups=payload["lineups"],
+        weather=payload["weather"],
+        park_factors=payload["park_factors"],
+        venues=payload["venues"],
+        market_lines=payload["market_lines"],
+    )
+
+
+def _build_features_by_season_parallel(
+    *,
+    games: pd.DataFrame,
+    batting_logs: pd.DataFrame,
+    pitcher_logs: pd.DataFrame,
+    lineups: pd.DataFrame,
+    weather: pd.DataFrame | None,
+    park_factors: pd.DataFrame | None,
+    venues: pd.DataFrame | None,
+    market_lines: pd.DataFrame | None,
+    prediction_mode: str,
+    workers: int,
+) -> pd.DataFrame:
+    seasons = sorted(pd.to_numeric(games["season"], errors="coerce").dropna().astype(int).unique().tolist())
+    payloads = []
+    for season in seasons:
+        season_games = games[pd.to_numeric(games["season"], errors="coerce").eq(season)].copy()
+        game_ids = set(season_games["game_id"].astype(str))
+        payloads.append(
+            {
+                "prediction_mode": prediction_mode,
+                "games": season_games,
+                "batting_logs": _filter_for_season(batting_logs, season, game_ids),
+                "pitcher_logs": _filter_for_season(pitcher_logs, season, game_ids),
+                "lineups": _filter_for_season(lineups, season, game_ids),
+                "weather": _filter_for_season(weather, season, game_ids),
+                "park_factors": _filter_for_season(park_factors, season, game_ids),
+                "venues": venues,
+                "market_lines": _filter_for_season(market_lines, season, game_ids),
+            }
+        )
+
+    frames = []
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_build_features_for_season, payload): int(payload["games"]["season"].iloc[0]) for payload in payloads}
+        for future in as_completed(futures):
+            season = futures[future]
+            frame = future.result()
+            print(f"Built features for season {season}: {len(frame)} rows", flush=True)
+            frames.append(frame)
+    return pd.concat(frames, ignore_index=True).sort_values(["game_date", "game_id"]).reset_index(drop=True)
 
 
 def combine_features_command(args: argparse.Namespace) -> None:
@@ -841,6 +954,79 @@ def win_pick_rule_report_command(args: argparse.Namespace) -> None:
         print(f"Wrote daily: {paths['daily']}")
 
 
+def _scored_ou_prediction_rows(predictions: pd.DataFrame, *, actual_total_column: str = "actual_total") -> pd.DataFrame:
+    if {"home_score", "away_score"}.issubset(predictions.columns):
+        home_scores = pd.to_numeric(predictions["home_score"], errors="coerce")
+        away_scores = pd.to_numeric(predictions["away_score"], errors="coerce")
+        return predictions[home_scores.notna() & away_scores.notna()].copy()
+    if actual_total_column in predictions.columns:
+        actuals = pd.to_numeric(predictions[actual_total_column], errors="coerce")
+        return predictions[actuals.notna()].copy()
+    return predictions.copy()
+
+
+def ou_pick_rule_report_command(args: argparse.Namespace) -> None:
+    predictions = read_csv_table(args.predictions)
+    if args.exclude_dates:
+        excluded = {value.strip() for value in args.exclude_dates.split(",") if value.strip()}
+        if args.date_column not in predictions.columns:
+            raise ValueError(f"--date-column {args.date_column!r} is missing from predictions")
+        dates = pd.to_datetime(predictions[args.date_column], errors="coerce").dt.strftime("%Y-%m-%d")
+        predictions = predictions[~dates.isin(excluded)].copy()
+
+    ruled = apply_ou_pick_rules(
+        predictions,
+        predicted_total_column=args.predicted_total_column,
+        total_line_column=args.total_line_column,
+        actual_total_column=args.actual_total_column,
+        lean_margin=args.lean_margin,
+        strong_margin=args.strong_margin,
+    )
+    scored = _scored_ou_prediction_rows(ruled, actual_total_column=args.actual_total_column)
+    summary_frame = scored if args.scored_only else ruled
+    summary = summarize_ou_pick_rules(summary_frame)
+
+    daily = pd.DataFrame()
+    if args.date_column in scored.columns:
+        daily_rows = []
+        date_values = pd.to_datetime(scored[args.date_column], errors="coerce").dt.strftime("%Y-%m-%d")
+        for date, group in scored.assign(_rule_date=date_values).groupby("_rule_date", dropna=False, sort=True):
+            by_rule = summarize_ou_pick_rules(group).set_index("rule")
+            actionable = by_rule.loc["actionable"]
+            daily_rows.append(
+                {
+                    "date": date,
+                    "scored_games": int(len(group)),
+                    "pass_games": int(by_rule.loc["pass", "games"]) if "pass" in by_rule.index else 0,
+                    "lean_games": int(by_rule.loc["lean", "games"]) if "lean" in by_rule.index else 0,
+                    "strong_games": int(by_rule.loc["strong", "games"]) if "strong" in by_rule.index else 0,
+                    "picks": int(actionable["picks"]),
+                    "hits": float(actionable["hits"]),
+                    "accuracy": float(actionable["accuracy"]) if pd.notna(actionable["accuracy"]) else np.nan,
+                    "coverage": float(actionable["coverage"]) if pd.notna(actionable["coverage"]) else np.nan,
+                    "avg_margin": float(actionable["avg_margin"]) if pd.notna(actionable["avg_margin"]) else np.nan,
+                }
+            )
+        daily = pd.DataFrame(daily_rows)
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "predictions": output_dir / "ou_pick_rules.csv",
+        "summary": output_dir / "ou_pick_rule_summary.csv",
+        "daily": output_dir / "ou_pick_rule_daily.csv",
+    }
+    write_csv_table(ruled, paths["predictions"])
+    write_csv_table(summary, paths["summary"])
+    if not daily.empty:
+        write_csv_table(daily, paths["daily"])
+
+    print(f"Wrote predictions: {paths['predictions']}")
+    print(f"Wrote summary: {paths['summary']}")
+    if not daily.empty:
+        print(f"Wrote daily: {paths['daily']}")
+
+
 def oof_selective_pick_report_command(args: argparse.Namespace) -> None:
     features = read_feature_tables(args.features)
     model_values = [value.strip() for value in args.models.split(",") if value.strip()]
@@ -1288,6 +1474,139 @@ def standardize_mykbo_game_tables_command(args: argparse.Namespace) -> None:
         print(f"Wrote {name}: {path} ({len(frame)} rows)")
 
 
+def collect_npb_source_pages_command(args: argparse.Namespace) -> None:
+    collectors = {
+        "npb_official": NPBOfficialCollector,
+        "proeyekyuu": ProEyeKyuuCollector,
+        "baseballdatajp": BaseballDataJPCollector,
+    }
+    collector = collectors[args.source]()
+    pages = [value.strip() for value in args.pages.split(",") if value.strip()] if args.pages else None
+    output_root = Path(args.output_root)
+    raw_root = output_root / "raw" / args.source
+    parsed_root = output_root / "standardized" / "npb" / args.source
+    if (args.start_season is None) != (args.end_season is None):
+        raise ValueError("Provide both --start-season and --end-season, or omit both.")
+    seasons = range(args.start_season, args.end_season + 1) if args.start_season and args.end_season else [None]
+    total_pages = 0
+    total_tables = 0
+    for season in seasons:
+        raw_dir = raw_root / str(season) if season is not None else raw_root
+        parsed_dir = parsed_root / str(season) if season is not None else parsed_root
+        paths = collector.save_pages(
+            raw_dir,
+            pages=pages,
+            season=season,
+            skip_existing=not args.no_skip_existing,
+        )
+        total_pages += len(paths)
+        if args.parse_tables:
+            for path in paths:
+                total_tables += len(collector.write_html_tables(path, parsed_dir))
+        label = season if season is not None else "unseasoned"
+        print(
+            f"Collected {args.source} {label}: pages={len(paths)} "
+            f"raw_dir={raw_dir} parsed_dir={parsed_dir if args.parse_tables else 'skipped'}",
+            flush=True,
+        )
+    print(f"Collected {args.source} pages={total_pages} parsed_outputs={total_tables}")
+
+
+def standardize_proeyekyuu_tables_command(args: argparse.Namespace) -> None:
+    outputs = standardize_proeyekyuu_tables(args.input_dir, args.output_dir, season=args.season)
+    for name, path in outputs.items():
+        frame = read_csv_table(path)
+        print(f"Wrote {name}: {path} ({len(frame)} rows)")
+
+
+def standardize_proeyekyuu_game_results_command(args: argparse.Namespace) -> None:
+    path = standardize_proeyekyuu_game_results(args.input_dir, args.output)
+    frame = read_csv_table(path)
+    print(f"Wrote ProEyeKyuu NPB games: {path} ({len(frame)} rows)")
+
+
+def collect_proeyekyuu_game_results_command(args: argparse.Namespace) -> None:
+    seasons = range(args.start_season, args.end_season + 1)
+    path = ProEyeKyuuCollector().save_game_results(
+        args.output,
+        seasons=seasons,
+        end_date=args.end_date,
+        page_length=args.page_length,
+    )
+    frame = read_csv_table(path)
+    games = frame["GameID"].nunique() if "GameID" in frame.columns else 0
+    print(f"Wrote ProEyeKyuu NPB game-result rows: {path} ({len(frame)} rows, games={games})")
+
+
+def collect_proeyekyuu_game_pages_command(args: argparse.Namespace) -> None:
+    games = read_csv_table(args.games)
+    paths = ProEyeKyuuCollector().save_game_pages(
+        games,
+        args.output_dir,
+        limit=args.limit,
+        skip_existing=not args.no_skip_existing,
+        workers=args.workers,
+    )
+    parsed_count = 0
+    if args.parse_tables:
+        parsed_dir = Path(args.parsed_dir) if args.parsed_dir else Path(args.output_dir).with_name(Path(args.output_dir).name + "_tables")
+        for path in paths:
+            parsed_count += len(ProEyeKyuuCollector.write_html_tables(path, parsed_dir))
+        print(f"Parsed ProEyeKyuu game pages to {parsed_dir}: outputs={parsed_count}")
+    print(f"Collected ProEyeKyuu NPB game pages={len(paths)} output_dir={args.output_dir}")
+
+
+def standardize_proeyekyuu_game_tables_command(args: argparse.Namespace) -> None:
+    outputs = standardize_proeyekyuu_game_tables(args.input_dir, args.games, args.output_dir, workers=args.workers)
+    for name, path in outputs.items():
+        frame = read_csv_table(path)
+        print(f"Wrote {name}: {path} ({len(frame)} rows)")
+
+
+def enrich_proeyekyuu_games_starters_command(args: argparse.Namespace) -> None:
+    path = write_proeyekyuu_games_with_starters(args.games, args.pitcher_logs, args.output)
+    frame = read_csv_table(path)
+    home_count = int(frame["home_sp_id"].notna().sum()) if "home_sp_id" in frame.columns else 0
+    away_count = int(frame["away_sp_id"].notna().sum()) if "away_sp_id" in frame.columns else 0
+    print(f"Wrote ProEyeKyuu NPB games with starters: {path} ({len(frame)} rows, home_sp={home_count}, away_sp={away_count})")
+
+
+def write_npb_venue_template_command(args: argparse.Namespace) -> None:
+    path = write_npb_venue_template(args.games, args.output)
+    frame = read_csv_table(path)
+    print(f"Wrote NPB venue template: {path} ({len(frame)} rows)")
+
+
+def enrich_npb_games_venues_command(args: argparse.Namespace) -> None:
+    path = write_npb_games_with_venues(args.games, args.venues, args.output)
+    frame = read_csv_table(path)
+    filled = int(frame["venue_id"].notna().sum()) if "venue_id" in frame.columns else 0
+    print(f"Wrote NPB games with venues: {path} ({len(frame)} rows, venue_id={filled})")
+
+
+def audit_proeyekyuu_batting_detail_command(args: argparse.Namespace) -> None:
+    path = write_proeyekyuu_batting_detail_audit(args.input_dir, args.output)
+    print(f"Wrote ProEyeKyuu batting detail audit: {path}")
+
+
+def write_npb_feature_set_command(args: argparse.Namespace) -> None:
+    path = write_npb_feature_set(args.features, args.output)
+    frame = read_csv_table(path)
+    included = int(frame["status"].eq("included").sum()) if "status" in frame.columns else 0
+    print(f"Wrote NPB feature set: {path} ({included} included features)")
+
+
+def write_npb_model_ready_features_command(args: argparse.Namespace) -> None:
+    path = write_npb_model_ready_features(args.features, args.feature_set, args.output)
+    frame = read_csv_table(path)
+    print(f"Wrote NPB model-ready features: {path} ({len(frame)} rows, {frame.shape[1]} columns)")
+
+
+def report_proeyekyuu_coverage_command(args: argparse.Namespace) -> None:
+    path = write_proeyekyuu_coverage_report(args.games, args.standardized_dir, args.output)
+    print(f"Wrote ProEyeKyuu NPB coverage report: {path}")
+
+
 def standardize_balldontlie_lineups_command(args: argparse.Namespace) -> None:
     payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
     game_map = read_csv_table(args.game_id_map) if args.game_id_map else None
@@ -1315,6 +1634,28 @@ def write_market_lines_template_command(args: argparse.Namespace) -> None:
     template = market_lines_template(read_csv_table(args.games), game_ids=game_ids)
     write_csv_table(template, args.output)
     print(f"Wrote {len(template)} market line template rows to {args.output}")
+
+
+def standardize_mlb_market_odds_command(args: argparse.Namespace) -> None:
+    """Parse the SBR-derived JSON odds dump, match to standardized games, save CSV."""
+
+    from mlb_winprob.odds import match_odds_to_games, parse_sbr_odds_dataset
+
+    odds = parse_sbr_odds_dataset(args.input)
+    season_files = [path.strip() for path in args.games.split(",") if path.strip()]
+    games_frames = []
+    for path in season_files:
+        games_frames.append(read_csv_table(path))
+    games = pd.concat(games_frames, ignore_index=True)
+    matched = match_odds_to_games(odds, games)
+    if args.matched_only:
+        matched = matched[matched["game_id"].notna()].copy()
+    write_csv_table(matched, args.output)
+    has_id = matched["game_id"].notna().sum()
+    print(
+        f"Parsed {len(odds)} odds rows; matched {has_id} to standardized games. "
+        f"Wrote {len(matched)} rows to {args.output}"
+    )
 
 
 def standardize_manual_lineups_command(args: argparse.Namespace) -> None:
@@ -1658,6 +1999,7 @@ def main() -> None:
     build_parser = subparsers.add_parser("build-features")
     _add_common_raw_args(build_parser)
     build_parser.add_argument("--prediction-mode", choices=["pre_lineup", "confirmed_lineup"], default="confirmed_lineup")
+    build_parser.add_argument("--workers", type=int, default=1, help="Parallel feature workers by season.")
     build_parser.add_argument("--output", required=True)
     build_parser.set_defaults(func=build_features_command)
 
@@ -1715,7 +2057,19 @@ def main() -> None:
     final_runs_parser = subparsers.add_parser("fit-final-runs-model")
     final_runs_parser.add_argument("--features", required=True)
     final_runs_parser.add_argument("--prediction-mode", choices=["pre_lineup", "confirmed_lineup"], default="confirmed_lineup")
-    final_runs_parser.add_argument("--model-name", choices=["ridge", "random_forest_regressor"], default="random_forest_regressor")
+    final_runs_parser.add_argument(
+        "--model-name",
+        choices=[
+            "ridge",
+            "random_forest_regressor",
+            "gradient_boosting_regressor",
+            "hist_gradient_boosting_regressor",
+            "lightgbm_regressor",
+            "xgboost_regressor",
+            "catboost_regressor",
+        ],
+        default="random_forest_regressor",
+    )
     final_runs_parser.add_argument("--random-state", type=int, default=42)
     final_runs_parser.add_argument("--output-dir", required=True)
     final_runs_parser.set_defaults(func=fit_final_runs_model_command)
@@ -1791,6 +2145,19 @@ def main() -> None:
     win_rules_parser.add_argument("--exclude-dates", help="Optional comma-separated YYYY-MM-DD dates to exclude from the report.")
     win_rules_parser.add_argument("--scored-only", action="store_true", help="Compute the overall summary after dropping rows without final scores.")
     win_rules_parser.set_defaults(func=win_pick_rule_report_command)
+
+    ou_rules_parser = subparsers.add_parser("ou-pick-rule-report")
+    ou_rules_parser.add_argument("--predictions", required=True, help="CSV with predicted totals and market/total lines.")
+    ou_rules_parser.add_argument("--output-dir", required=True)
+    ou_rules_parser.add_argument("--predicted-total-column", default="pred_total")
+    ou_rules_parser.add_argument("--total-line-column", default="total_line")
+    ou_rules_parser.add_argument("--actual-total-column", default="actual_total")
+    ou_rules_parser.add_argument("--date-column", default="game_date")
+    ou_rules_parser.add_argument("--lean-margin", type=float, default=0.5)
+    ou_rules_parser.add_argument("--strong-margin", type=float, default=1.5)
+    ou_rules_parser.add_argument("--exclude-dates", help="Optional comma-separated YYYY-MM-DD dates to exclude from the report.")
+    ou_rules_parser.add_argument("--scored-only", action="store_true", help="Compute the overall summary after dropping rows without final scores.")
+    ou_rules_parser.set_defaults(func=ou_pick_rule_report_command)
 
     oof_selective_parser = subparsers.add_parser("oof-selective-pick-report")
     oof_selective_parser.add_argument("--features", nargs="+", required=True)
@@ -1934,6 +2301,96 @@ def main() -> None:
     mykbo_game_standardize_parser.add_argument("--output-dir", required=True)
     mykbo_game_standardize_parser.set_defaults(func=standardize_mykbo_game_tables_command)
 
+    npb_pages_parser = subparsers.add_parser("collect-npb-source-pages")
+    npb_pages_parser.add_argument(
+        "--source",
+        choices=["npb_official", "proeyekyuu", "baseballdatajp"],
+        required=True,
+        help="NPB source to collect. Scope is limited to official NPB, ProEyeKyuu, and BaseballData.jp.",
+    )
+    npb_pages_parser.add_argument("--start-season", type=int)
+    npb_pages_parser.add_argument("--end-season", type=int)
+    npb_pages_parser.add_argument("--output-root", default="data")
+    npb_pages_parser.add_argument("--pages", help="Comma-separated page keys for the selected source.")
+    npb_pages_parser.add_argument("--parse-tables", action="store_true", help="Also parse HTML tables and links into CSV files.")
+    npb_pages_parser.add_argument("--no-skip-existing", action="store_true")
+    npb_pages_parser.set_defaults(func=collect_npb_source_pages_command)
+
+    proeyekyuu_standardize_parser = subparsers.add_parser("standardize-proeyekyuu-tables")
+    proeyekyuu_standardize_parser.add_argument("--season", type=int, required=True)
+    proeyekyuu_standardize_parser.add_argument("--input-dir", required=True)
+    proeyekyuu_standardize_parser.add_argument("--output-dir", required=True)
+    proeyekyuu_standardize_parser.set_defaults(func=standardize_proeyekyuu_tables_command)
+
+    proeyekyuu_games_parser = subparsers.add_parser("standardize-proeyekyuu-game-results")
+    proeyekyuu_games_parser.add_argument("--input-dir", required=True)
+    proeyekyuu_games_parser.add_argument("--output", required=True)
+    proeyekyuu_games_parser.set_defaults(func=standardize_proeyekyuu_game_results_command)
+
+    proeyekyuu_collect_games_parser = subparsers.add_parser("collect-proeyekyuu-game-results")
+    proeyekyuu_collect_games_parser.add_argument("--start-season", type=int, required=True)
+    proeyekyuu_collect_games_parser.add_argument("--end-season", type=int, required=True)
+    proeyekyuu_collect_games_parser.add_argument("--end-date")
+    proeyekyuu_collect_games_parser.add_argument("--page-length", type=int, default=1000)
+    proeyekyuu_collect_games_parser.add_argument("--output", required=True)
+    proeyekyuu_collect_games_parser.set_defaults(func=collect_proeyekyuu_game_results_command)
+
+    proeyekyuu_game_pages_parser = subparsers.add_parser("collect-proeyekyuu-game-pages")
+    proeyekyuu_game_pages_parser.add_argument("--games", required=True, help="CSV from standardize-proeyekyuu-game-results.")
+    proeyekyuu_game_pages_parser.add_argument("--output-dir", required=True)
+    proeyekyuu_game_pages_parser.add_argument("--limit", type=int)
+    proeyekyuu_game_pages_parser.add_argument("--workers", type=int, default=1)
+    proeyekyuu_game_pages_parser.add_argument("--parse-tables", action="store_true")
+    proeyekyuu_game_pages_parser.add_argument("--parsed-dir")
+    proeyekyuu_game_pages_parser.add_argument("--no-skip-existing", action="store_true")
+    proeyekyuu_game_pages_parser.set_defaults(func=collect_proeyekyuu_game_pages_command)
+
+    proeyekyuu_game_tables_parser = subparsers.add_parser("standardize-proeyekyuu-game-tables")
+    proeyekyuu_game_tables_parser.add_argument("--input-dir", required=True)
+    proeyekyuu_game_tables_parser.add_argument("--games", required=True)
+    proeyekyuu_game_tables_parser.add_argument("--output-dir", required=True)
+    proeyekyuu_game_tables_parser.add_argument("--workers", type=int, default=1)
+    proeyekyuu_game_tables_parser.set_defaults(func=standardize_proeyekyuu_game_tables_command)
+
+    proeyekyuu_games_starters_parser = subparsers.add_parser("enrich-proeyekyuu-games-starters")
+    proeyekyuu_games_starters_parser.add_argument("--games", required=True)
+    proeyekyuu_games_starters_parser.add_argument("--pitcher-logs", required=True)
+    proeyekyuu_games_starters_parser.add_argument("--output", required=True)
+    proeyekyuu_games_starters_parser.set_defaults(func=enrich_proeyekyuu_games_starters_command)
+
+    npb_venue_template_parser = subparsers.add_parser("write-npb-venue-template")
+    npb_venue_template_parser.add_argument("--games", required=True)
+    npb_venue_template_parser.add_argument("--output", required=True)
+    npb_venue_template_parser.set_defaults(func=write_npb_venue_template_command)
+
+    npb_games_venues_parser = subparsers.add_parser("enrich-npb-games-venues")
+    npb_games_venues_parser.add_argument("--games", required=True)
+    npb_games_venues_parser.add_argument("--venues", required=True)
+    npb_games_venues_parser.add_argument("--output", required=True)
+    npb_games_venues_parser.set_defaults(func=enrich_npb_games_venues_command)
+
+    proeyekyuu_batting_audit_parser = subparsers.add_parser("audit-proeyekyuu-batting-detail")
+    proeyekyuu_batting_audit_parser.add_argument("--input-dir", required=True)
+    proeyekyuu_batting_audit_parser.add_argument("--output", required=True)
+    proeyekyuu_batting_audit_parser.set_defaults(func=audit_proeyekyuu_batting_detail_command)
+
+    npb_feature_set_parser = subparsers.add_parser("write-npb-feature-set")
+    npb_feature_set_parser.add_argument("--features", required=True)
+    npb_feature_set_parser.add_argument("--output", required=True)
+    npb_feature_set_parser.set_defaults(func=write_npb_feature_set_command)
+
+    npb_model_ready_parser = subparsers.add_parser("write-npb-model-ready-features")
+    npb_model_ready_parser.add_argument("--features", required=True)
+    npb_model_ready_parser.add_argument("--feature-set", required=True)
+    npb_model_ready_parser.add_argument("--output", required=True)
+    npb_model_ready_parser.set_defaults(func=write_npb_model_ready_features_command)
+
+    proeyekyuu_coverage_parser = subparsers.add_parser("report-proeyekyuu-coverage")
+    proeyekyuu_coverage_parser.add_argument("--games", required=True)
+    proeyekyuu_coverage_parser.add_argument("--standardized-dir", required=True)
+    proeyekyuu_coverage_parser.add_argument("--output", required=True)
+    proeyekyuu_coverage_parser.set_defaults(func=report_proeyekyuu_coverage_command)
+
     balldontlie_standardize_parser = subparsers.add_parser("standardize-balldontlie-lineups")
     balldontlie_standardize_parser.add_argument("--input", required=True, help="Raw JSON from collect-balldontlie-lineups")
     balldontlie_standardize_parser.add_argument("--output", required=True)
@@ -1954,6 +2411,24 @@ def main() -> None:
     market_template_parser.add_argument("--game-ids", help="Optional comma-separated game IDs to include.")
     market_template_parser.add_argument("--output", required=True)
     market_template_parser.set_defaults(func=write_market_lines_template_command)
+
+    market_odds_parser = subparsers.add_parser(
+        "standardize-mlb-market-odds",
+        help="Parse SBR-derived MLB odds JSON dump and match to standardized games.",
+    )
+    market_odds_parser.add_argument("--input", required=True, help="SBR JSON file (mlb_odds_dataset.json).")
+    market_odds_parser.add_argument(
+        "--games",
+        required=True,
+        help="Comma-separated list of season games.csv paths to match odds against.",
+    )
+    market_odds_parser.add_argument("--output", required=True)
+    market_odds_parser.add_argument(
+        "--matched-only",
+        action="store_true",
+        help="Only keep rows with a matched game_id (drops postseason, ASG, future dates).",
+    )
+    market_odds_parser.set_defaults(func=standardize_mlb_market_odds_command)
 
     manual_standardize_parser = subparsers.add_parser("standardize-manual-lineups")
     manual_standardize_parser.add_argument("--input", required=True, help="User-edited manual lineup CSV.")
