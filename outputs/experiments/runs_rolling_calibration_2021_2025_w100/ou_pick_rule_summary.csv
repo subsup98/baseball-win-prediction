@@ -1,0 +1,9 @@
+variant,bucket,n_total,n_scored,n_hits,accuracy
+raw_pred_total,pass,3058,2943,1449,0.4923547400611621
+raw_pred_total,lean,3956,3823,1977,0.5171331415119016
+raw_pred_total,strong,1923,1858,1084,0.5834230355220668
+raw_pred_total,actionable,5879,5681,3061,0.5388135891568386
+rolling_calibrated,pass,3016,2915,1475,0.5060034305317325
+rolling_calibrated,lean,4054,3895,2023,0.5193838254172015
+rolling_calibrated,strong,1867,1814,1075,0.5926130099228225
+rolling_calibrated,actionable,5921,5709,3098,0.5426519530565773

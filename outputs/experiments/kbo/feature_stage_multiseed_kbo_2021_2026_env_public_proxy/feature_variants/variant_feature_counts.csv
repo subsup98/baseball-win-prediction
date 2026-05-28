@@ -1,0 +1,5 @@
+variant,rows,columns,dropped_vs_full
+full,4119,241,0
+no_env,4119,213,28
+no_public_proxy,4119,192,49
+baseline_like,4119,164,77

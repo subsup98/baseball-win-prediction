@@ -1,0 +1,5 @@
+variant,rows,columns,recent_columns_kept
+baseline,12148,242,0
+pythag_only,12148,247,5
+volatility_only,12148,244,2
+scoring_only,12148,254,12

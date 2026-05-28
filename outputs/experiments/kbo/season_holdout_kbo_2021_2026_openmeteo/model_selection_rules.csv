@@ -1,0 +1,14 @@
+holdout_season,rule_name,selected_model,selection_metric,selection_value,coverage
+2022,overall_log_loss,random_forest_shallow,log_loss,0.6863087837979102,1.0
+2022,confidence_55,random_forest_shallow,accuracy_conf_55,0.5795795795795796,0.4157303370786517
+2022,confidence_60,random_forest_shallow,accuracy_conf_60,0.631578947368421,0.11860174781523096
+2023,overall_log_loss,random_forest_shallow,log_loss,0.6893547897923128,1.0
+2023,confidence_55,extra_trees,accuracy_conf_55,0.5714285714285714,0.34125
+2023,confidence_60,random_forest,accuracy_conf_60,0.5765765765765766,0.13875
+2024,overall_log_loss,random_forest_shallow,log_loss,0.6841538420691781,1.0
+2024,confidence_55,random_forest_shallow,accuracy_conf_55,0.5933609958506224,0.3252361673414305
+2025,overall_log_loss,random_forest_shallow,log_loss,0.6808744822948426,1.0
+2025,confidence_55,random_forest_shallow,accuracy_conf_55,0.6199376947040498,0.4355495251017639
+2025,confidence_60,random_forest_shallow,accuracy_conf_60,0.6987951807228916,0.11261872455902307
+2026,overall_log_loss,random_forest_shallow,log_loss,0.6909663100507331,1.0
+2026,confidence_55,random_forest,accuracy_conf_55,0.5462962962962963,0.39416058394160586

@@ -1,0 +1,4 @@
+variant,rows,columns,recent_columns_kept
+volatility_only,12148,244,2
+close_game_only,12148,249,7
+v1_full,12148,278,36

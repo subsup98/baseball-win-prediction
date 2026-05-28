@@ -1,0 +1,17 @@
+holdout_season,rule_name,selected_model,selection_metric,selection_value,coverage
+2022,overall_log_loss,random_forest_shallow,log_loss,0.6782273203196977,1.0
+2022,confidence_55,random_forest_shallow,accuracy_conf_55,0.6187845303867403,0.5213991769547325
+2022,confidence_60,random_forest,accuracy_conf_60,0.6360360360360361,0.22839506172839505
+2022,confidence_65,logistic,accuracy_conf_65,0.5963699222126189,0.47613168724279836
+2023,overall_log_loss,random_forest,log_loss,0.6815491981097311,1.0
+2023,confidence_55,random_forest_shallow,accuracy_conf_55,0.5972222222222222,0.5037037037037037
+2023,confidence_60,extra_trees,accuracy_conf_60,0.6601307189542484,0.1259259259259259
+2023,confidence_65,logistic,accuracy_conf_65,0.5922222222222222,0.37037037037037035
+2024,overall_log_loss,random_forest,log_loss,0.681720278792472,1.0
+2024,confidence_55,random_forest_shallow,accuracy_conf_55,0.6063303659742829,0.416220666941128
+2024,confidence_60,random_forest_shallow,accuracy_conf_60,0.6543624161073825,0.12268423219431865
+2024,confidence_65,logistic,accuracy_conf_65,0.5773381294964028,0.22890078221490326
+2025,overall_log_loss,random_forest_shallow,log_loss,0.6797969345022598,1.0
+2025,confidence_55,extra_trees,accuracy_conf_55,0.6179653679653679,0.3802469135802469
+2025,confidence_60,random_forest_shallow,accuracy_conf_60,0.6913946587537092,0.13868312757201645
+2025,confidence_65,logistic,accuracy_conf_65,0.6237816764132553,0.2111111111111111

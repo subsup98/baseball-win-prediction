@@ -34,6 +34,94 @@ KBO_TEAM_ABBREVIATIONS = {
     "SSG": "SSG Landers",
 }
 
+KBO_PRIMARY_VENUES = {
+    "Doosan Bears": "seoul_jamsil",
+    "LG Twins": "seoul_jamsil",
+    "Kiwoom Heroes": "seoul_gocheok",
+    "SSG Landers": "incheon_munhak",
+    "KT Wiz": "suwon",
+    "Hanwha Eagles": "daejeon",
+    "Samsung Lions": "daegu",
+    "Kia Tigers": "gwangju",
+    "Lotte Giants": "busan_sajik",
+    "NC Dinos": "changwon",
+}
+
+KBO_VENUE_ROWS = [
+    {
+        "venue_id": "seoul_jamsil",
+        "venue_name": "Seoul-Jamsil",
+        "latitude": 37.5122,
+        "longitude": 127.0719,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+    {
+        "venue_id": "seoul_gocheok",
+        "venue_name": "Seoul-Gocheok",
+        "latitude": 37.4982,
+        "longitude": 126.8671,
+        "timezone_offset": 9,
+        "is_dome": 1,
+    },
+    {
+        "venue_id": "incheon_munhak",
+        "venue_name": "Incheon-Munhak",
+        "latitude": 37.4351,
+        "longitude": 126.6908,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+    {
+        "venue_id": "suwon",
+        "venue_name": "Suwon",
+        "latitude": 37.2998,
+        "longitude": 127.0097,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+    {
+        "venue_id": "daejeon",
+        "venue_name": "Daejeon",
+        "latitude": 36.3170,
+        "longitude": 127.4292,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+    {
+        "venue_id": "daegu",
+        "venue_name": "Daegu",
+        "latitude": 35.8410,
+        "longitude": 128.6817,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+    {
+        "venue_id": "gwangju",
+        "venue_name": "Gwangju",
+        "latitude": 35.1682,
+        "longitude": 126.8888,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+    {
+        "venue_id": "busan_sajik",
+        "venue_name": "Busan-Sajik",
+        "latitude": 35.1940,
+        "longitude": 129.0615,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+    {
+        "venue_id": "changwon",
+        "venue_name": "Changwon",
+        "latitude": 35.2225,
+        "longitude": 128.5822,
+        "timezone_offset": 9,
+        "is_dome": 0,
+    },
+]
+
 
 def _clean_text(value: object) -> object:
     if not isinstance(value, str):
@@ -226,6 +314,137 @@ def standardize_mykbo_tables(input_dir: str | Path, output_dir: str | Path, *, s
             outputs[output_name] = path
 
     return outputs
+
+
+def kbo_venue_seed() -> pd.DataFrame:
+    """Return stable KBO venue metadata used by the shared feature builder."""
+
+    return pd.DataFrame(KBO_VENUE_ROWS)
+
+
+def write_kbo_venue_seed(output: str | Path) -> Path:
+    """Write the built-in KBO venue seed table."""
+
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    kbo_venue_seed().to_csv(path, index=False)
+    return path
+
+
+def enrich_kbo_games_with_venues(games: pd.DataFrame, venues: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Attach KBO venue IDs from MyKBO venue text or the home team's primary park."""
+
+    out = games.copy()
+    venue_lookup = (venues.copy() if venues is not None else kbo_venue_seed())
+    venue_lookup["venue_name_key"] = venue_lookup["venue_name"].astype(str).str.lower()
+    out["venue_id"] = np.nan
+    if "venue_name" in out.columns:
+        name_key = out["venue_name"].astype(str).str.lower()
+        mapping = dict(zip(venue_lookup["venue_name_key"], venue_lookup["venue_id"], strict=False))
+        out["venue_id"] = name_key.map(mapping)
+    out["venue_id"] = out["venue_id"].fillna(out["home_team"].map(KBO_PRIMARY_VENUES))
+    name_by_id = dict(zip(venue_lookup["venue_id"], venue_lookup["venue_name"], strict=False))
+    if "venue_name" not in out.columns:
+        out["venue_name"] = np.nan
+    out["venue_name"] = out["venue_name"].fillna(out["venue_id"].map(name_by_id))
+    return out
+
+
+def augment_kbo_weather_with_open_meteo(
+    *,
+    games: pd.DataFrame,
+    venues: pd.DataFrame | None = None,
+    collector=None,
+) -> pd.DataFrame:
+    """Populate KBO weather rows using Open-Meteo historical hourly data.
+
+    Returns the same column shape as build_kbo_weather_stub but with real
+    temperature/wind/humidity for outdoor games. Dome games keep is_dome=1 and
+    receive the same outdoor reading (the feature builder can ignore it via the
+    dome flag); we do not fabricate indoor air to avoid invented physics.
+    """
+    from datetime import timedelta
+
+    from mlb_winprob.data_sources import OpenMeteoArchiveCollector
+
+    venue_lookup = (venues.copy() if venues is not None else kbo_venue_seed()).copy()
+    venue_lookup["venue_id"] = venue_lookup["venue_id"].astype("string")
+    needed = {"venue_id", "latitude", "longitude", "is_dome"}
+    missing = needed - set(venue_lookup.columns)
+    if missing:
+        raise ValueError(f"venues missing columns: {sorted(missing)}")
+
+    collector = collector or OpenMeteoArchiveCollector()
+    base = games[["game_id", "game_date", "season", "venue_id"]].copy()
+    base["venue_id"] = base["venue_id"].astype("string")
+    base["weather_hour"] = pd.to_datetime(base["game_date"], utc=True, errors="coerce").dt.round("h")
+    base = base.merge(
+        venue_lookup[["venue_id", "latitude", "longitude", "is_dome"]],
+        on="venue_id",
+        how="left",
+    )
+
+    hourly_frames: list[pd.DataFrame] = []
+    for (venue_id, season), group in base.dropna(subset=["latitude", "longitude"]).groupby(
+        ["venue_id", "season"], dropna=True
+    ):
+        lat = float(group["latitude"].iloc[0])
+        lon = float(group["longitude"].iloc[0])
+        min_hour = group["weather_hour"].min()
+        max_hour = group["weather_hour"].max()
+        if pd.isna(min_hour) or pd.isna(max_hour):
+            continue
+        hourly = collector.hourly_weather(
+            latitude=lat,
+            longitude=lon,
+            start_date=min_hour.date().isoformat(),
+            end_date=(max_hour.date() + timedelta(days=1)).isoformat(),
+        )
+        hourly["venue_id"] = str(venue_id)
+        hourly["season"] = season
+        hourly_frames.append(hourly)
+
+    out = base[["game_id", "is_dome"]].copy()
+    out["temperature"] = np.nan
+    out["wind_speed"] = np.nan
+    out["wind_direction"] = np.nan
+    out["humidity"] = np.nan
+    out["weather_source"] = pd.NA
+
+    if hourly_frames:
+        hourly_weather = pd.concat(hourly_frames, ignore_index=True)
+        joined = base.merge(hourly_weather, on=["venue_id", "season", "weather_hour"], how="left")
+        out["temperature"] = pd.to_numeric(joined["open_meteo_temperature"], errors="coerce").to_numpy()
+        out["wind_speed"] = pd.to_numeric(joined["open_meteo_wind_speed"], errors="coerce").to_numpy()
+        out["wind_direction"] = pd.to_numeric(joined["open_meteo_wind_direction_degrees"], errors="coerce").to_numpy()
+        out["humidity"] = pd.to_numeric(joined["humidity"], errors="coerce").to_numpy()
+        out.loc[out["temperature"].notna(), "weather_source"] = "open_meteo_archive"
+
+    out["is_dome"] = pd.to_numeric(out["is_dome"], errors="coerce")
+    return out[
+        ["game_id", "temperature", "wind_speed", "wind_direction", "humidity", "is_dome", "weather_source"]
+    ]
+
+
+def build_kbo_weather_stub(games: pd.DataFrame, venues: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Create offline KBO weather rows with dome status.
+
+    Actual temperature/wind/humidity should come from a later historical weather
+    backfill. This keeps the shared weather feature path live without inventing
+    outdoor weather observations.
+    """
+
+    venue_lookup = (venues.copy() if venues is not None else kbo_venue_seed())[["venue_id", "is_dome"]].copy()
+    venue_lookup["venue_id"] = venue_lookup["venue_id"].astype("string")
+    out = games[["game_id", "venue_id"]].copy()
+    out["venue_id"] = out["venue_id"].astype("string")
+    out = out.merge(venue_lookup, on="venue_id", how="left")
+    out["temperature"] = np.nan
+    out["wind_speed"] = np.nan
+    out["wind_direction"] = np.nan
+    out["humidity"] = np.nan
+    out["is_dome"] = pd.to_numeric(out["is_dome"], errors="coerce")
+    return out[["game_id", "temperature", "wind_speed", "wind_direction", "humidity", "is_dome"]]
 
 
 def _game_id_from_href(value: object) -> str | None:

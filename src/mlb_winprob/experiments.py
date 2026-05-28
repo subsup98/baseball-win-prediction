@@ -7,7 +7,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import (
+    GradientBoostingRegressor,
+    HistGradientBoostingRegressor,
+    RandomForestRegressor,
+)
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -207,6 +211,104 @@ def make_regressor(name: str, *, random_state: int = 42) -> Any:
                         min_samples_leaf=8,
                         random_state=random_state,
                         n_jobs=-1,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "gradient_boosting_regressor":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    GradientBoostingRegressor(
+                        n_estimators=300,
+                        learning_rate=0.05,
+                        max_depth=3,
+                        min_samples_leaf=8,
+                        subsample=0.85,
+                        random_state=random_state,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "hist_gradient_boosting_regressor":
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    HistGradientBoostingRegressor(
+                        max_iter=400,
+                        learning_rate=0.05,
+                        max_leaf_nodes=31,
+                        l2_regularization=0.1,
+                        random_state=random_state,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "lightgbm_regressor":
+        try:
+            from lightgbm import LGBMRegressor
+        except ImportError as exc:
+            raise ModelUnavailableError("lightgbm is not installed. Install with .[boosters].") from exc
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    LGBMRegressor(
+                        n_estimators=600,
+                        learning_rate=0.03,
+                        num_leaves=31,
+                        subsample=0.85,
+                        colsample_bytree=0.85,
+                        random_state=random_state,
+                        verbosity=-1,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "xgboost_regressor":
+        try:
+            from xgboost import XGBRegressor
+        except ImportError as exc:
+            raise ModelUnavailableError("xgboost is not installed. Install with .[boosters].") from exc
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    XGBRegressor(
+                        n_estimators=600,
+                        learning_rate=0.03,
+                        max_depth=4,
+                        subsample=0.85,
+                        colsample_bytree=0.85,
+                        random_state=random_state,
+                    ),
+                ),
+            ]
+        )
+    if normalized == "catboost_regressor":
+        try:
+            from catboost import CatBoostRegressor
+        except ImportError as exc:
+            raise ModelUnavailableError("catboost is not installed. Install with .[boosters].") from exc
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    CatBoostRegressor(
+                        iterations=600,
+                        learning_rate=0.03,
+                        depth=5,
+                        l2_leaf_reg=3.0,
+                        loss_function="RMSE",
+                        random_seed=random_state,
+                        verbose=False,
                     ),
                 ),
             ]

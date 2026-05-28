@@ -1,0 +1,4 @@
+variant,rows,columns,recent_columns_kept
+baseline,12148,242,0
+v2_core,12148,262,20
+run_diff_only,12148,247,5

@@ -1,0 +1,10 @@
+variant,rows,columns,recent_columns_kept
+baseline,12148,242,0
+v2_core,12148,262,20
+run_diff_only,12148,247,5
+scoring_only,12148,254,12
+pythag_only,12148,247,5
+weighted_win_only,12148,247,5
+volatility_only,12148,244,2
+close_game_only,12148,249,7
+v1_full,12148,278,36

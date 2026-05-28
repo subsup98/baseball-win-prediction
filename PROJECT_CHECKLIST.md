@@ -573,7 +573,7 @@ away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
      - normalized name 기반 player map, game date/team pair 기반 game map 생성 경로 추가
      - 실제 운영 전 API 키, provider terms, ID map 검증 필요
 
-2. [ ] `pre_lineup` 실제 source smoke test
+2. [x] `pre_lineup` 실제 source smoke test
    - 실제 source row로 `lineups_projected_*.csv` 생성
    - `build-features --prediction-mode pre_lineup` 실행
    - confirmed-lineup feature 대비 null-rate와 성능 차이 확인
@@ -615,13 +615,22 @@ away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
      - `outputs/experiments/catboost_season_rule_multiseed_2021_2025/`
      - 판정: season-switch rule 채택 안 함. CatBoost가 seed에 걸쳐 안정적으로 이기는 시즌은 2024뿐이며 margin도 미미(-0.00072). RF 단일 default 유지 (MODEL_IMPROVEMENT_LOG 2026-05-27)
 
-4. [ ] Stable feature group ablation
+4. [x] Stable feature group ablation
    - feature stability 결과를 기반으로 stable group / low-stability group ablation 구성
    - one-off feature 삭제 대신 그룹 단위로 log loss 영향을 확인
+   - 완료 반영:
+     - `scripts/run_stable_group_ablation.py` + `outputs/experiments/stable_group_ablation_confirmed_2021_2025/`
+     - 안정 13개가 신호 지배(제거 시 log_loss +0.0037), 저안정 19개는 노이즈(제거해도 -0.00004)
+     - 판정: full 유지. 저안정 그룹은 경량화 시 안전 prune 후보 (MODEL_IMPROVEMENT_LOG 2026-05-27)
 
-5. [ ] Windows test warning 정리
+5. [x] Windows test warning 정리
    - sklearn/joblib subprocess reader thread의 cp949 decode warning 원인 확인
    - 테스트 통과에는 영향 없지만 CI/로그 품질 개선 후보
+   - 완료 반영:
+     - cp949 decode warning은 현재 sklearn 1.8 환경에서 재현되지 않음(이미 해소)
+     - `logistic_l1`을 deprecated `penalty="l1"` -> `l1_ratio=1.0, solver="saga"` 새 API로 마이그레이션 (sklearn 1.10 제거 대비)
+     - benign LightGBM feature-name UserWarning을 `pyproject.toml` filterwarnings로 범위 한정 억제
+     - 결과: `pytest` 68 passed, 0 warnings
 # 2026-05-26 Score/OU baseline direction update
 
 - [x] Confirm actual scores are stored as `home_score` / `away_score`
@@ -630,8 +639,19 @@ away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
 - [x] Document that expected score / expected total should be the primary output
 - [x] Document that direct OU model is currently a secondary confirmation signal
 - [x] Add score-model-focused holdout report for total runs and synthetic OU lines
-- [ ] Compare score model alternatives beyond current random forest regressor
-- [ ] Add combined recommendation rules: pass / lean / strong
+- [x] Compare score model alternatives beyond current random forest regressor
+  - 완료 반영:
+    - `make_regressor`에 gradient_boosting/hist_gradient_boosting/lightgbm/xgboost/catboost regressor 추가
+    - `scripts/run_score_model_comparison.py` + `outputs/experiments/score_model_comparison_confirmed_2021_2025/`
+    - 판정: **catboost_regressor 채택** - 4개 holdout 전부에서 total_mae·OU@8.5 정확도 RF 대비 우위
+    - 최종 번들: `outputs/final_models/runs_catboost_confirmed_2021_2025_statcast/runs_model.joblib`
+    - `fit-final-runs-model --model-name` 선택지 확장 (MODEL_IMPROVEMENT_LOG 2026-05-27)
+- [x] Add combined recommendation rules: pass / lean / strong
+  - 완료 반영:
+    - `apply_ou_pick_rules` / `summarize_ou_pick_rules` + `ou-pick-rule-report` CLI 추가 (win-pick과 동일 구조)
+    - margin 기반 pass(<0.5) / lean(>=0.5) / strong(>=1.5) 규칙, scored-only/daily 지원
+    - 2026 season-to-date(catboost runs) 검증: lean 60.3%(390픽), strong 70.6%(85픽), margin↑ 정확도↑ 단조
+    - 테스트 3종 추가 (test_evaluation.py), pytest 86 passed
 - [ ] Backfill historical game-specific market total lines and odds
 - [ ] Improve predicted total calibration/dispersion around middle lines such as 8.5
 
@@ -687,3 +707,48 @@ away_sp_statcast_xwoba_allowed_to_date non_null: 13 / 90
 - [x] Verify `54/57` comparison rule: 20 actionable picks, 13/20 correct
 - [x] Validate pick thresholds on historical out-of-fold predictions
 - [x] Add agreement-based rule using main RF + reduced shallow + soft voting candidates
+
+# 2026-05-28 Status Sync
+
+## Completed Since Last Sync
+
+- [x] Adopt score/expected-runs `catboost_regressor` after 2022-2025 holdout comparison
+- [x] Add OU pass/lean/strong pick-rule utilities and CLI report
+- [x] Validate OU rules on 2026 season-to-date predictions with fixed 8.5 line
+- [x] Build KBO 2021-2026 canonical feature table and multi-season holdout reports
+- [x] Select KBO-tuned `random_forest_shallow` final win model
+- [x] Add NPB public-source collectors/standardizers for official NPB, ProEyeKyuu, and BaseballData.jp
+- [x] Build ProEyeKyuu NPB 50-game canonical smoke sample
+- [x] Add NPB venue enrichment, coverage report, batting-detail audit, feature-set export, and model-ready feature export
+- [x] Run first NPB chronological smoke model comparison on 50 games
+- [x] Document NPB public/proxy feature gaps in `src/mlb_winprob/NPB_FEATURE_GAP.md`
+
+## Current Decisions
+
+- [x] MLB win probability default remains `full + random_forest`
+- [x] MLB score/expected-runs default is now `catboost_regressor`
+- [x] KBO win model default is `full env/public-proxy + random_forest_shallow` trained on 2021-2026
+- [x] NPB is pipeline-smoke ready only; no production model decision yet
+
+## Next Priority
+
+- [ ] Backfill real historical market totals/odds for OU validation
+- [ ] Improve predicted-total calibration/dispersion around common middle lines
+- [x] Test MLB Recent Form Feature Pack v1
+  - Completed: weighted recent win/run-diff/runs-for/runs-allowed, low-run/5+ rates, volatility, one-run/pythag/close dependency
+  - Evaluation: `outputs/experiments/mlb_recent_form_multiseed_2021_2025/`
+  - Decision: do not adopt as full feature pack; baseline RF remains better by mean log_loss about 0.0015
+- [ ] Build MLB Recent Form v2 as narrower ablation/overlay instead of full raw feature pack
+  - Initial ablation completed: `outputs/experiments/mlb_recent_form_v2_ablation_2021_2025/`
+  - Best narrow RF candidates: `pythag_only`, `volatility_only`, `scoring_only`
+  - Decision: not adopted yet; lift is tiny and needs confirmation before default-model use
+  - [ ] Confirm top Recent Form v2 groups with more seeds and/or recent-season holdout
+  - [ ] Test the best Recent Form v2 signal as a pick-rule/reporting overlay
+- [x] Expand KBO public-data sabermetric/proxy features beyond the current league-common set
+  - Completed: venue seed, dome stub, empirical park factor, public batting/pitching rates, starter/lineup `_proxy` columns
+  - Evaluation: `outputs/experiments/kbo/feature_stage_multiseed_kbo_2021_2026_env_public_proxy/`
+  - Decision: keep upgraded KBO full + `random_forest_shallow`; baseline-like 대비 log_loss -0.00221, accuracy +1.31%p
+- [ ] Backfill real KBO outdoor weather observations; current KBO weather path only supplies dome status offline
+- [ ] Expand NPB beyond the 50-game ProEyeKyuu smoke sample into a full-season or multi-season canonical dataset
+- [ ] Find or wire a richer NPB batting-detail source for 2B/3B/HR/BB/HBP/SF before treating lineup power/on-base features as reliable
+- [ ] Re-run NPB model selection only after a materially larger sample is available

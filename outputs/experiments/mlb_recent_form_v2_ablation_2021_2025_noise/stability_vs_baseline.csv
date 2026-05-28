@@ -1,0 +1,7 @@
+variant,model_name,mean_log_loss_delta_vs_baseline,median_log_loss_delta_vs_baseline,log_loss_win_rate_vs_baseline,mean_accuracy_delta_vs_baseline,accuracy_win_rate_vs_baseline
+close_game_only,random_forest,,,0.0,,0.0
+close_game_only,random_forest_shallow,,,0.0,,0.0
+v1_full,random_forest,,,0.0,,0.0
+v1_full,random_forest_shallow,,,0.0,,0.0
+volatility_only,random_forest,,,0.0,,0.0
+volatility_only,random_forest_shallow,,,0.0,,0.0

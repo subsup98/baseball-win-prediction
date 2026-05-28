@@ -1,0 +1,5 @@
+variant,model_name,mean_log_loss_delta_vs_baseline,median_log_loss_delta_vs_baseline,log_loss_win_rate_vs_baseline,mean_accuracy_delta_vs_baseline,accuracy_win_rate_vs_baseline
+volatility_only,random_forest,-0.000133976073853233,-6.45785843224056e-05,0.5714285714285714,0.0013965400441316564,0.5357142857142857
+pythag_only,random_forest,-5.608628410945306e-05,9.858517252325782e-06,0.4642857142857143,0.0017046011488168953,0.5357142857142857
+baseline,random_forest,0.0,0.0,0.0,0.0,0.0
+scoring_only,random_forest,0.00015603500281843478,-6.512394804109034e-05,0.5357142857142857,-0.00016166960611404705,0.5

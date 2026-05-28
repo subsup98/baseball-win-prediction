@@ -103,9 +103,10 @@ def make_classifier(name: str, *, random_state: int = 42) -> Any:
                     "model",
                     LogisticRegression(
                         C=0.5,
-                        max_iter=3000,
+                        max_iter=5000,
                         penalty="l1",
-                        solver="liblinear",
+                        l1_ratio=1.0,
+                        solver="saga",
                         random_state=random_state,
                     ),
                 ),

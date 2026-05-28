@@ -1,0 +1,10 @@
+metric,value
+pred_total_std,1.0995855621279311
+market_line_std,1.0071639203317582
+actual_total_std,4.475330160602523
+pred_minus_market_mean,0.5194136462264529
+pred_minus_market_std,1.2155499935084824
+pred_minus_market_mae,0.9933596491104099
+actual_minus_market_mean,0.44189884748797137
+actual_minus_market_mae,3.431324829361083
+n_scored,8937.0

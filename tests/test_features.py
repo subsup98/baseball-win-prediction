@@ -374,6 +374,30 @@ def test_optional_statcast_quality_features_are_leakage_safe():
     assert g2["home_sp_fastball_usage_to_date"] == (50 + 10 + 5) / 92
 
 
+def test_public_data_proxy_features_are_available_without_statcast_columns():
+    games, batting_logs, pitcher_logs, lineups, weather, park_factors = _raw_tables()
+    batting_logs = batting_logs.drop(columns=[column for column in batting_logs.columns if column.startswith("statcast_")])
+    pitcher_logs = pitcher_logs.drop(columns=[column for column in pitcher_logs.columns if column.startswith("statcast_")])
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode="confirmed_lineup"))
+
+    features = builder.build(
+        games=games,
+        batting_logs=batting_logs,
+        pitcher_logs=pitcher_logs,
+        lineups=lineups,
+        weather=weather,
+        park_factors=park_factors,
+    )
+    g2 = features.loc[features["game_id"] == "g2"].iloc[0]
+
+    assert pd.isna(g2["home_lineup_statcast_xwoba"])
+    assert g2["home_lineup_xwoba_proxy"] > 0
+    assert g2["home_lineup_hard_contact_proxy"] > 0
+    assert pd.isna(g2["home_sp_whiff_rate_to_date"])
+    assert g2["home_sp_whiff_proxy"] == 7 / 24
+    assert g2["sp_run_prevention_proxy_diff"] == g2["away_sp_run_prevention_proxy"] - g2["home_sp_run_prevention_proxy"]
+
+
 def test_lineup_platoon_features_use_opposing_starter_hand():
     features = _build_features()
     g2 = features.loc[features["game_id"] == "g2"].iloc[0]
@@ -568,3 +592,45 @@ def test_market_line_features_include_lines_odds_movement_and_starter_changes():
     assert g2["market_home_sp_changed"] == 1.0
     assert g2["market_away_sp_changed"] == 0.0
     assert g2["market_starter_change_count"] == 1.0
+
+
+def test_recent_form_features_use_only_prior_games():
+    games, batting_logs, pitcher_logs, lineups, weather, park_factors = _raw_tables()
+    games = pd.concat(
+        [
+            games,
+            pd.DataFrame(
+                [
+                    {
+                        "game_id": "g3",
+                        "game_date": "2024-04-09",
+                        "season": 2024,
+                        "home_team": "HOM",
+                        "away_team": "AWY",
+                        "home_sp_id": "HSP",
+                        "away_sp_id": "ASP",
+                        "home_score": 1,
+                        "away_score": 0,
+                        "venue_id": "park",
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    builder = FeatureBuilder(FeatureBuildConfig(prediction_mode="confirmed_lineup"))
+
+    team_features = builder._compute_team_features(games, batting_logs)
+    g1_home = team_features[(team_features["game_id"] == "g1") & (team_features["team"] == "HOM")].iloc[0]
+    g2_home = team_features[(team_features["game_id"] == "g2") & (team_features["team"] == "HOM")].iloc[0]
+    g3_home = team_features[(team_features["game_id"] == "g3") & (team_features["team"] == "HOM")].iloc[0]
+
+    assert pd.isna(g1_home["team_weighted_win_rate_last_10"])
+    assert g2_home["team_weighted_win_rate_last_10"] == pytest.approx(1.0)
+    assert g2_home["team_low_run_rate_last_10"] == pytest.approx(0.0)
+    assert g3_home["team_weighted_win_rate_last_10"] == pytest.approx(0.45945945945945943)
+    assert g3_home["team_low_run_rate_last_10"] == pytest.approx(0.5)
+    assert g3_home["team_5plus_run_rate_last_10"] == pytest.approx(0.5)
+    assert g3_home["team_runs_for_volatility_last_10"] == pytest.approx(2.1213203435596424)
+    assert g3_home["team_pythagorean_win_pct_last_20"] == pytest.approx(0.5)
+    assert g3_home["team_actual_minus_pythag_last_20"] == pytest.approx(0.0)

@@ -40,3 +40,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = [
+    # Benign LightGBM warning: pipeline imputer strips DataFrame names before
+    # the booster, so predict sees an unnamed array. Does not affect results.
+    "ignore:X does not have valid feature names:UserWarning",
+]

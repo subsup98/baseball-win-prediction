@@ -4,9 +4,11 @@ import pytest
 
 from mlb_winprob.evaluation import (
     apply_model_agreement_pick_rules,
+    apply_ou_pick_rules,
     apply_win_pick_rules,
     evaluate_probabilities,
     model_selection_rules,
+    summarize_ou_pick_rules,
     summarize_win_pick_rules,
 )
 from mlb_winprob.experiments import select_feature_columns
@@ -116,6 +118,55 @@ def test_summarize_win_pick_rules_reports_actionable_accuracy():
     assert actionable["picks"] == 3
     assert actionable["hits"] == 2
     assert actionable["accuracy"] == pytest.approx(2 / 3)
+
+
+def test_apply_ou_pick_rules_marks_pass_lean_and_strong():
+    predictions = pd.DataFrame(
+        {
+            "pred_total": [8.3, 7.9, 10.2],
+            "total_line": [8.5, 8.5, 8.5],
+            "actual_total": [8, 9, 11],
+        }
+    )
+    ruled = apply_ou_pick_rules(predictions, lean_margin=0.5, strong_margin=1.5)
+
+    assert ruled["ou_pick_rule"].tolist() == ["pass", "lean", "strong"]
+    assert ruled["rule_ou_pick"].tolist() == ["", "under", "over"]
+    assert pd.isna(ruled.loc[0, "rule_ou_correct"])  # pass is not scored
+    assert ruled.loc[1, "rule_ou_correct"] == np.False_  # under pick, actual 9 > 8.5 -> over, wrong
+    assert ruled.loc[2, "rule_ou_correct"] == np.True_  # strong over, actual 11 > 8.5 -> over correct
+
+
+def test_apply_ou_pick_rules_scores_against_actual_total():
+    predictions = pd.DataFrame(
+        {
+            "pred_total": [7.5],  # margin -1.0 -> under (lean)
+            "total_line": [8.5],
+            "actual_total": [10],  # actual over -> under pick is wrong
+        }
+    )
+    ruled = apply_ou_pick_rules(predictions, lean_margin=0.5, strong_margin=1.5)
+    assert ruled.loc[0, "ou_pick_rule"] == "lean"
+    assert ruled.loc[0, "rule_ou_pick"] == "under"
+    assert ruled.loc[0, "rule_ou_correct"] == np.False_
+
+
+def test_summarize_ou_pick_rules_reports_actionable_accuracy():
+    predictions = pd.DataFrame(
+        {
+            "pred_total": [8.4, 7.9, 10.2, 8.55],
+            "total_line": [8.5, 8.5, 8.5, 8.5],
+            "actual_total": [8, 8, 11, 9],
+        }
+    )
+    ruled = apply_ou_pick_rules(predictions, lean_margin=0.5, strong_margin=1.5)
+    summary = summarize_ou_pick_rules(ruled)
+
+    actionable = summary[summary["rule"] == "actionable"].iloc[0]
+    # rows: 0 pass, 1 lean(under, actual 8 -> under correct), 2 strong(over, actual 11 -> over correct), 3 pass
+    assert actionable["picks"] == 2
+    assert actionable["hits"] == 2
+    assert actionable["accuracy"] == pytest.approx(1.0)
 
 
 def test_apply_model_agreement_pick_rules_requires_challenger_pick_match():

@@ -1,0 +1,4 @@
+variant,rows,columns,recent_columns_kept
+scoring_only,12148,254,12
+pythag_only,12148,247,5
+weighted_win_only,12148,247,5

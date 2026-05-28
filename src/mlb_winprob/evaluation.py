@@ -226,6 +226,103 @@ def summarize_win_pick_rules(
     return pd.DataFrame(rows)
 
 
+def apply_ou_pick_rules(
+    predictions: pd.DataFrame,
+    *,
+    predicted_total_column: str = "pred_total",
+    total_line_column: str = "total_line",
+    actual_total_column: str = "actual_total",
+    lean_margin: float = 0.5,
+    strong_margin: float = 1.5,
+) -> pd.DataFrame:
+    """Add pass/lean/strong over-under pick rules to a prediction table.
+
+    Mirrors :func:`apply_win_pick_rules` but for totals: the "confidence" is the
+    absolute distance between the predicted total and the market line. A pick is
+    `pass` below ``lean_margin``, `lean` at/above it, and `strong` at/above
+    ``strong_margin``.
+    """
+
+    if lean_margin < 0:
+        raise ValueError("lean_margin must be non-negative")
+    if strong_margin < lean_margin:
+        raise ValueError("strong_margin must be greater than or equal to lean_margin")
+    required = {predicted_total_column, total_line_column}
+    missing = required - set(predictions.columns)
+    if missing:
+        raise ValueError(f"predictions is missing required columns: {sorted(missing)}")
+
+    output = predictions.copy()
+    predicted_total = pd.to_numeric(output[predicted_total_column], errors="coerce")
+    total_line = pd.to_numeric(output[total_line_column], errors="coerce")
+    output["ou_margin"] = predicted_total - total_line
+    output["ou_confidence"] = output["ou_margin"].abs()
+    output["raw_ou_pick"] = np.where(output["ou_margin"] > 0, "over", "under")
+    output["ou_pick_rule"] = np.select(
+        [
+            output["ou_confidence"] >= strong_margin,
+            output["ou_confidence"] >= lean_margin,
+        ],
+        ["strong", "lean"],
+        default="pass",
+    )
+    # Rows without a usable margin (missing prediction or line) are forced to pass.
+    output.loc[output["ou_margin"].isna(), "ou_pick_rule"] = "pass"
+    output["rule_ou_pick"] = np.where(output["ou_pick_rule"].eq("pass"), "", output["raw_ou_pick"])
+
+    if actual_total_column in output.columns:
+        actual_total = pd.to_numeric(output[actual_total_column], errors="coerce")
+        scored = actual_total.notna() & total_line.notna()
+        output["actual_ou"] = np.where(
+            scored,
+            np.where(actual_total > total_line, "over", "under"),
+            "",
+        )
+        output["rule_ou_correct"] = np.where(
+            output["ou_pick_rule"].eq("pass") | ~scored,
+            np.nan,
+            output["rule_ou_pick"].astype(str).eq(pd.Series(output["actual_ou"], index=output.index).astype(str)),
+        )
+    return output
+
+
+def summarize_ou_pick_rules(
+    predictions: pd.DataFrame,
+    *,
+    rule_column: str = "ou_pick_rule",
+    correct_column: str = "rule_ou_correct",
+    margin_column: str = "ou_confidence",
+) -> pd.DataFrame:
+    """Summarize pass/lean/strong over-under rule coverage and hit rate."""
+
+    if rule_column not in predictions.columns:
+        raise ValueError(f"predictions must include {rule_column}")
+
+    def _row(label: str, group: pd.DataFrame) -> dict[str, object]:
+        if correct_column in group.columns:
+            scored = group[~group[correct_column].isna()]
+            hits = float(scored[correct_column].astype(bool).sum())
+            picks = int(len(scored))
+        else:
+            hits = np.nan
+            picks = int(len(group))
+        return {
+            "rule": label,
+            "games": int(len(group)),
+            "picks": picks,
+            "hits": hits,
+            "accuracy": float(hits / picks) if picks else np.nan,
+            "coverage": float(len(group) / len(predictions)) if len(predictions) else np.nan,
+            "avg_margin": float(group[margin_column].mean())
+            if margin_column in group.columns and not group.empty
+            else np.nan,
+        }
+
+    rows = [_row(rule, predictions[predictions[rule_column].eq(rule)]) for rule in ["pass", "lean", "strong"]]
+    rows.append(_row("actionable", predictions[predictions[rule_column].ne("pass")]))
+    return pd.DataFrame(rows)
+
+
 def apply_model_agreement_pick_rules(
     oof_predictions: pd.DataFrame,
     *,

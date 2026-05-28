@@ -37,10 +37,12 @@ Keep KBO files separate from MLB and NPB files.
 - 2026-05-27: Added sample game-page collection and table standardization. Sample outputs are stored under `data/standardized/kbo/game_pages_sample_standardized/`.
 - Sample game-page standardization produced `batting_logs.csv`, `pitcher_logs.csv`, and `lineups.csv` from parsed MyKBO game pages.
 - 2026-05-27: Added request throttling (`--delay`, jittered) and parallel fetch (`--workers`) to `collect-mykbo-game-pages`, plus 429 retry with `Retry-After`-aware exponential backoff in `MyKBOStatsCollector.fetch_url`. A single rate-limit response no longer aborts a batch.
-- 2026-05-27: Collected all 1,752 final game pages across 2024-2026 (2024: 741, 2025: 737, 2026: 274) into `data/raw/mykbo_stats/game_pages/all/` and parsed 10,512 table files into `data/standardized/kbo/game_tables_all/`.
-- 2026-05-27: Standardized full-season canonical tables to `data/standardized/kbo/canonical_2024_2026/`: `batting_logs.csv` (44,733 rows), `pitcher_logs.csv` (17,274 rows), `lineups.csv` (31,536 rows). Coverage is 100% of scheduled finals (1,752 distinct games per table).
-- Quality: starter rows (batting_order 1-9) have 0% missing `mykbo_player_id` across all seasons; lineups have 0% missing `player_id`; 2 starting pitchers and 18 lineup slots per game as expected. The ~29.5% of batting rows without IDs are entirely pinch-hitters/runners with no batting order (known crosswalk gap; does not affect confirmed-lineup starters). Coverage summary: `outputs/quality/kbo/canonical_2024_2026/coverage_summary.csv`.
-- First Milestone step 1 (one season into canonical tables) is complete and exceeded: three seasons of `games`/`lineups`/`batting_logs`/`pitcher_logs` are available. `weather`/`venues` remain pending. Next: build public-data sabermetric features (step 2).
+- 2026-05-27: Confirmed MyKBO exposes earlier seasons (verified schedule + boxscore pages back to at least 2018). The prior 2024-2026-only scope was a collection-range choice, not a source limit. Expanded the KBO range to 2021-2026 to cover and exceed the MLB pipeline window (2021-2025).
+- 2026-05-27: Game-page boxscore table counts vary by season/game (some carry an extra leading header table, e.g. many 2022-2023 pages have 6 tables vs 5), so `standardize_mykbo_game_tables` now classifies each parsed table by its columns (`_classify_game_table`: ERA+IP -> pitching, Pos+AB -> batting) instead of by position. Verified identical output to the prior positional logic on 2024-2026 (parity check).
+- 2026-05-27: Collected all 4,119 final game pages across 2021-2026 (2021: 766, 2022: 801, 2023: 800, 2024: 741, 2025: 737, 2026: 274) into `data/raw/mykbo_stats/game_pages/all/` and parsed 26,861 table files into `data/standardized/kbo/game_tables_all/`. Schedule backbone is `data/standardized/kbo/games_mykbo_schedule_2021_2026.csv`.
+- 2026-05-27: Standardized full canonical tables to `data/standardized/kbo/canonical_2021_2026/`: `batting_logs.csv` (105,971 rows), `pitcher_logs.csv` (39,930 rows), `lineups.csv` (74,142 rows). Coverage is 100% of scheduled finals (4,119 distinct games per table across six seasons). The earlier `canonical_2024_2026/` subset was removed as superseded.
+- Quality: starter rows (batting_order 1-9) have ~0% missing `mykbo_player_id` across all seasons; lineups have 0% missing `player_id`; 2 starting pitchers and 18 lineup slots per game as expected. Batting rows without IDs are pinch-hitters/runners with no batting order (known crosswalk gap; does not affect confirmed-lineup starters). Coverage summary: `outputs/quality/kbo/canonical_2021_2026/coverage_summary.csv`.
+- First Milestone step 1 (one season into canonical tables) is complete and exceeded: six seasons (2021-2026) of `games`/`lineups`/`batting_logs`/`pitcher_logs` are available. `weather`/`venues` remain pending. Next: build public-data sabermetric features (step 2).
 
 ## Track 2: Public-Data Sabermetrics
 
@@ -87,3 +89,42 @@ Do not name KBO proxy columns as if they were direct Statcast measurements. For 
 3. Add MLB-to-KBO proxy columns with `_proxy` suffix.
 4. Run feature quality report.
 5. Train a first confirmed-lineup KBO holdout model once at least two seasons are available.
+
+### Status (2026-05-27)
+
+The MLB-mirrored minimum smoke test is DONE via `scripts/build_kbo_features_and_experiment.py`.
+
+- Canonical `games` (with derived `home_sp_id`/`away_sp_id`), `lineups`, `batting_logs`, `pitcher_logs` for 2021-2026 (4119 final games) feed the shared `FeatureBuilder` in `confirmed_lineup` mode. `home_sp_id`/`away_sp_id` null-rate is 0%.
+- League-common features build at MLB-like null rates (4122 rows, 205 columns); Statcast/weather/park groups stay all-null (no source), as planned.
+- Season holdout with elo/logistic/random_forest, trained on earlier seasons (2021-2023+):
+  - 2024 holdout: `logistic` best, log_loss 0.693, accuracy 0.533, conf-60 accuracy 0.569.
+  - 2025 holdout: `random_forest` best, log_loss 0.684, accuracy 0.564, conf-60 accuracy 0.649.
+  - 2026 holdout: `random_forest` best, log_loss 0.688, accuracy 0.504, conf-60 accuracy 0.75 (low coverage).
+  - All best-model holdouts beat the 0.693 coin-flip log-loss baseline.
+- Outputs: `data/processed/kbo/features_confirmed_kbo_2021_2026.csv`, `outputs/quality/kbo/features_confirmed_kbo_2021_2026/`, `outputs/experiments/kbo/season_holdout_kbo_2021_2026/`.
+
+### Status (2026-05-28)
+
+Steps 1-3 are now complete for the offline/public-data path.
+
+- Added KBO venue seed metadata and primary-team venue inference:
+  - `data/standardized/kbo/venues_seed.csv`
+  - `venue_id` null-rate: 0%
+  - Gocheok dome flag is supplied through an offline weather stub.
+- Added leakage-safe empirical park factors:
+  - `data/processed/kbo/park_factors_empirical_kbo_2021_2026.csv`
+  - prior-season factors apply from 2022 onward; 2021 is intentionally null.
+- Added public sabermetric and `_proxy` columns:
+  - lineup/team ISO, BABIP, BB rate, K rate
+  - starter ERA, K%, BB%, K/9, BB/9, HR/9
+  - `lineup_xwoba_proxy`, `lineup_hard_contact_proxy`, `sp_whiff_proxy`, `sp_run_prevention_proxy`, `sp_command_proxy`
+- Added `batters_faced` approximation for public pitcher logs that do not expose BF:
+  - `IP * 3 + H + BB + HBP`
+- Rebuilt upgraded feature table:
+  - `data/processed/kbo/features_confirmed_kbo_2021_2026_env_public_proxy.csv`
+  - 4119 rows, 241 columns
+- Stage evaluation:
+  - `outputs/experiments/kbo/feature_stage_multiseed_kbo_2021_2026_env_public_proxy/`
+  - full + `random_forest_shallow` beats baseline-like + shallow RF by mean log_loss `-0.00221` and mean accuracy `+0.0131`.
+
+Remaining KBO enhancement: real outdoor weather observations are still pending. Current weather support is an offline dome-status path, not temperature/wind/humidity backfill.

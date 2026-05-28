@@ -1,0 +1,7 @@
+variant,model_name,mean_log_loss_delta_vs_baseline,median_log_loss_delta_vs_baseline,log_loss_win_rate_vs_baseline,mean_accuracy_delta_vs_baseline,accuracy_win_rate_vs_baseline
+pythag_only,random_forest,,,0.0,,0.0
+pythag_only,random_forest_shallow,,,0.0,,0.0
+scoring_only,random_forest,,,0.0,,0.0
+scoring_only,random_forest_shallow,,,0.0,,0.0
+weighted_win_only,random_forest,,,0.0,,0.0
+weighted_win_only,random_forest_shallow,,,0.0,,0.0

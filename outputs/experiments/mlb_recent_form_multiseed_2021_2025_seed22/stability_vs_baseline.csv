@@ -1,0 +1,5 @@
+variant,model_name,mean_log_loss_delta_vs_baseline,median_log_loss_delta_vs_baseline,log_loss_win_rate_vs_baseline,mean_accuracy_delta_vs_baseline,accuracy_win_rate_vs_baseline
+baseline,random_forest,0.0,0.0,0.0,0.0,0.0
+baseline,random_forest_shallow,0.0007888719407397882,0.0005417563270302406,0.0,0.0037041696103496113,0.75
+recent_form,random_forest_shallow,0.0008809150805145771,0.0008351051076183613,0.25,-0.001955283127233115,0.5
+recent_form,random_forest,0.0013668867683848396,0.0016022427083897117,0.25,-0.0023668904712772776,0.25
